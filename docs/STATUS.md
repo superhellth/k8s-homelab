@@ -4,7 +4,7 @@ _Last updated: 2026-10-10_
 
 ## Summary
 
-Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`, not committed yet). An end-to-end PVC test is still to be done. CloudNativePG is next. None of the Talos config is in this repo yet.
+Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed; the first Postgres `Cluster` is next. None of the Talos config is in this repo yet.
 
 The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resize it, and etcd was re-bootstrapped (see "Disk layout" and "Lessons learned").
 
@@ -85,7 +85,7 @@ Repo layout (one directory per component, top-level directories ordered by depen
 ```
 infrastructure/          cluster-wide foundations (storage, operators, CRDs)
   local-path-provisioner/
-  cnpg-operator/         (planned)
+  cnpg-operator/
 databases/               things that use the foundations (planned)
   pg-main/
 ```
@@ -99,6 +99,16 @@ databases/               things that use the foundations (planned)
   - `patch-storageclass.yaml`: makes `local-path` the default StorageClass
 - StorageClass `local-path`: `WaitForFirstConsumer`, `reclaimPolicy: Delete` (upstream default, kept on purpose; data protection will come from backups). Sizes are not enforced; all PVs share the 120 GiB partition. No volume expansion or snapshots: it is not a CSI driver.
 - Applying it prints a PodSecurity `restricted` warning for the provisioner Deployment. This is expected: the namespace only overrides `enforce`, so `warn` stays at the Talos default `restricted`.
+- End-to-end PVC test passed (2026-10-10): the PVC stays `Pending` until a pod is scheduled, a helper pod creates the directory, the PV gets `nodeAffinity` to that node, data survives a pod restart, and deleting the PVC removes the PV and the directory. Pin test pods with `nodeSelector`, not `nodeName`: `nodeName` skips the scheduler, so the `volume.kubernetes.io/selected-node` annotation is never set and the PVC stays `Pending`.
+
+### cnpg-operator (installed 2026-10-10)
+
+- Upstream release manifest `cnpg-1.30.1.yaml` (from the `release-1.30` branch), referenced by URL in `infrastructure/cnpg-operator/kustomization.yaml`. No local patches.
+- Applied with `kubectl apply --server-side -k infrastructure/cnpg-operator/`, then `kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager`.
+- Installs 11 CRDs in `postgresql.cnpg.io/v1` (`Cluster`, `Backup`, `ScheduledBackup`, `Pooler`, `Database`, …), namespace `cnpg-system`, one `cnpg-controller-manager` replica (requests 100m / 100Mi, limit 200Mi), cluster-wide RBAC, and mutating + validating webhooks.
+- The operator pod already meets PSA `restricted`, so `cnpg-system` needs no namespace label.
+- The webhooks use `failurePolicy: Fail`: while the operator is not Ready, creating or changing any CNPG object is rejected.
+- The operator creates its own CA and webhook certificate (`cnpg-ca-secret`, `cnpg-webhook-cert`). Default images: `ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie` and `pgbouncer:1.25.2`.
 
 ### Decisions
 
@@ -135,6 +145,8 @@ All Talos files are currently in `~/talos` in WSL, **outside this repo and unenc
 - `kubectl kustomize` re-serialises objects with fields sorted alphabetically, so `kind:` can appear after a long `data:` block. Key order has no meaning in YAML.
 - `kubectl get a,b,c -w` fails with `you may only specify a single resource type`. Watch one type at a time, use `kubectl get events -A -w`, or poll with `watch -n1 '...'`.
 - CNPG's manifests must be applied with `kubectl apply --server-side`. Its CRDs exceed the 256 KiB annotation limit that client-side apply runs into.
+- The CNPG operator pod restarted once on first install (exit code 143 = SIGTERM, about 27 s after start, nothing wrong in the logs). Most likely cause: the startup probe (6 × 5 s) checks the webhook port, and the certificate Secret the operator had just created had not been synced into the pod yet (it is mounted `optional: true`, and the kubelet only syncs Secret volumes periodically). The second start worked. This is harmless on first install.
+- `kubectl rollout status deploy/<name>` waits until the Deployment's `.status` shows all replicas updated and Ready, and exits non-zero after `progressDeadlineSeconds` (600 s by default). Use it between applying an operator and applying its custom resources.
 - Heredocs: the end marker (`EOF`) must start at column 0, and `<<'EOF'` (quoted) stops the local shell from expanding `$(...)` inside the manifest.
 
 ## Open items / next steps
@@ -144,7 +156,7 @@ All Talos files are currently in `~/talos` in WSL, **outside this repo and unenc
 3. Decide on secrets handling (e.g. SOPS + age) and the repo layout, then move patches (including `nodes/`) and the Image Factory schematic into the repo with a `.gitignore` for plaintext secrets.
 4. Choose a GitOps controller (Flux or Argo CD).
 5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded.
-6. Run the PVC test for local-path-provisioner (PVC → pod → helper pod → PV with node affinity → data survives pod restart → teardown on delete), then commit `infrastructure/`.
-7. Then: CloudNativePG operator v1.30.1 (`infrastructure/cnpg-operator/`, applied with `--server-side`), and a first `Cluster` `pg-main` in namespace `databases` with `instances: 1`, `storageClass: local-path` and Guaranteed QoS. Next, choose and set up backups (see "Decisions"), then scale to `instances: 2` with required pod anti-affinity.
+6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`.
+7. First `Cluster` `pg-main` in namespace `databases` (`databases/pg-main/`) with `instances: 1`, `storageClass: local-path` and Guaranteed QoS (size it for the 8 GB on `talos-ii`). Next, choose and set up backups (see "Decisions"), then scale to `instances: 2` with required pod anti-affinity.
 8. Record the `talos-ii` installer schematic (see "Versions").
 9. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed.
