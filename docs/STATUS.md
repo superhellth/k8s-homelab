@@ -4,7 +4,7 @@ _Last updated: 2026-10-10_
 
 ## Summary
 
-Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed; the first Postgres `Cluster` is next. None of the Talos config is in this repo yet.
+Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested; the first Postgres `Cluster` is next. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed (see "Where things live").
 
 The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resize it, and etcd was re-bootstrapped (see "Disk layout" and "Lessons learned").
 
@@ -30,16 +30,23 @@ The worker has no `node-role.kubernetes.io/*` label because the NodeRestriction 
 | Kubernetes | v1.37.1 (both nodes) |
 | containerd | 2.3.6 |
 | kubectl (WSL) | v1.37.1 |
-| Image Factory schematic | `2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8` (installer: `factory.talos.dev/metal-installer/<schematic>:v1.14.2`) |
+| Image Factory schematic (`talos-i`) | `2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8`, source `talos/schematics/default.yaml` |
+| Image Factory schematic (`talos-ii`) | `4b3cd373a192c8469e859b7a0cfbed3ecc3577c4a2d346a37b0aeff9cd17cdb0`, source `talos/schematics/talos-ii.yaml` |
 
-Extensions in the schematic: `intel-ucode` (20260812), as reported by `talosctl get extensions`. The schematic YAML itself is not saved yet.
+Installer image: `factory.talos.dev/metal-installer/<schematic>:v1.14.2`. Both schematic files were checked against the running nodes (`talosctl get extensions`, where the `schematic` entry shows the running ID) and by POSTing them to the factory, which returns the same IDs.
 
-**Unresolved:** `nodes/talos-ii.yaml` overrides the installer image with a different schematic, `4b3cd373a192c8469e859b7a0cfbed3ecc3577c4a2d346a37b0aeff9cd17cdb0`. Which schematic `talos-ii` should use, and what extensions it contains, still needs to be recorded.
+| Node | Extensions |
+|---|---|
+| `talos-i` | `intel-ucode` (20260812) |
+| `talos-ii` | `i915` (20260916-v1.14.2), `intel-ucode` (20260812) |
+
+`talos-ii` has `i915` (Intel iGPU driver) on top of the default. It only matters for GPU video transcoding or the laptop's own display. Keeping it or moving `talos-ii` to the default schematic is still undecided (see "Open items").
 
 ## Cluster config
 
 - Cluster name `super-hellthalos`, Kubernetes endpoint `https://192.168.0.192:6443`
 - Talos defaults are used for everything except the patches below: Flannel CNI, kube-proxy, CoreDNS.
+- All Talos files live in `talos/`; run the commands below from that directory.
 - Base configs (`controlplane.yaml`, `worker.yaml`) were generated with:
   ```bash
   talosctl gen config super-hellthalos https://192.168.0.192:6443 \
@@ -83,6 +90,11 @@ Until a GitOps controller is chosen, manifests live in this repo as Kustomize di
 
 Repo layout (one directory per component, top-level directories ordered by dependency):
 ```
+talos/                   machine config layer, applied with talosctl (not by a GitOps controller)
+  patch-all.yaml, patch-controlplane.yaml
+  nodes/                 per-node patches
+  schematics/            Image Factory schematics
+  _out/, secrets.yaml    gitignored
 infrastructure/          cluster-wide foundations (storage, operators, CRDs)
   local-path-provisioner/
   cnpg-operator/
@@ -101,7 +113,7 @@ databases/               things that use the foundations (planned)
 - Applying it prints a PodSecurity `restricted` warning for the provisioner Deployment. This is expected: the namespace only overrides `enforce`, so `warn` stays at the Talos default `restricted`.
 - End-to-end PVC test passed (2026-10-10): the PVC stays `Pending` until a pod is scheduled, a helper pod creates the directory, the PV gets `nodeAffinity` to that node, data survives a pod restart, and deleting the PVC removes the PV and the directory. Pin test pods with `nodeSelector`, not `nodeName`: `nodeName` skips the scheduler, so the `volume.kubernetes.io/selected-node` annotation is never set and the PVC stays `Pending`.
 
-### cnpg-operator (installed 2026-10-10)
+### cnpg-operator (installed and tested 2026-10-10)
 
 - Upstream release manifest `cnpg-1.30.1.yaml` (from the `release-1.30` branch), referenced by URL in `infrastructure/cnpg-operator/kustomization.yaml`. No local patches.
 - Applied with `kubectl apply --server-side -k infrastructure/cnpg-operator/`, then `kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager`.
@@ -118,12 +130,13 @@ databases/               things that use the foundations (planned)
 
 ## Where things live
 
-All Talos files are currently in `~/talos` in WSL, **outside this repo and unencrypted**:
-- `secrets.yaml`: cluster CAs and tokens. Losing it means losing admin access, so back it up.
-- `_out/controlplane.yaml`, `_out/worker.yaml`: base machine configs (contain secrets)
-- `_out/talos-i.yaml`, `_out/talos-ii.yaml`: final per-node machine configs (contain secrets)
-- `_out/talosconfig`: Talos API client credentials (`TALOSCONFIG` env var points here)
-- `patch-all.yaml`, `patch-controlplane.yaml`, `nodes/*.yaml`: safe to commit
+The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). The rule for what gets committed: sources without secrets are committed, generated files are not, and secrets are committed only once they are encrypted.
+
+- Committed: `patch-all.yaml`, `patch-controlplane.yaml`, `nodes/*.yaml`, `schematics/*.yaml`
+- Gitignored, **plaintext, only copy is in the working tree**:
+  - `talos/secrets.yaml`: cluster CAs and tokens. Losing it means losing admin access. It is not backed up yet, and `git clean -fdx` would delete it.
+  - `talos/_out/`: generated machine configs (`controlplane.yaml`, `worker.yaml`, `talos-i.yaml`, `talos-ii.yaml`) and `talosconfig`. They all contain secrets and can be regenerated from the sources plus `secrets.yaml`.
+- `talosctl` uses `~/.talos/config` (context `super-hellthalos`, endpoint `192.168.0.192`, client cert expires 2027-10-05). `TALOSCONFIG` is not set.
 - kubeconfig merged into `~/.kube/config`
 
 ## Lessons learned (Talos 1.14)
@@ -137,6 +150,10 @@ All Talos files are currently in `~/talos` in WSL, **outside this repo and unenc
 - Wiping EPHEMERAL on the only control plane deletes etcd, which means the whole cluster state. It needs `--graceful=false`, because a graceful reset tries to leave etcd, and the last member can't. Afterwards, wait for etcd to sit in "waiting for bootstrap" and run `talosctl bootstrap` once. Kubeconfig and talosconfig keep working because the CA comes from `secrets.yaml`, and Talos re-applies Flannel, CoreDNS, and kube-proxy by itself.
 - A kubelet only registers its Node object at startup. After etcd was wiped, `talos-ii` (whose kubelet kept running) did not reappear until `talosctl -n 192.168.0.220 service kubelet restart`. `talosctl health` showed this as `can't find expected node with IPs [...]`.
 - A node cordoned by a graceful reset stays cordoned after the reboot (`kubectl uncordon`). The flag is stored on the Node object in etcd, not on the node itself.
+- An Image Factory schematic ID is the hash of the schematic YAML. The factory normalises the YAML first (indentation, comments), but **list order counts**: `[intel-ucode, i915]` and `[i915, intel-ucode]` produce different IDs for the same image. There is no inheritance between schematics; each file describes a complete image.
+- `POST https://factory.talos.dev/schematics` with the YAML returns its ID (`curl -sX POST --data-binary @file.yaml ...`; `@` means "read from file", and `--data-binary` keeps newlines, which `-d` strips). An empty body returns just `EOF`. `GET /schematics/<id>` returns the stored YAML for any existing ID.
+- In `talosctl get extensions`, `schematic` (the running schematic ID) and `modules.dep` (kernel module index rebuilt because an extension, here `i915`, ships kernel modules) are generated entries, not extensions to put in a schematic.
+- Changing `installer.image` in the machine config does not change the running OS. It only takes effect on the next install or `talosctl upgrade --image ...`. Upgrading with the wrong schematic ID silently removes extensions.
 - Talos enables Pod Security Admission cluster-wide with `enforce: baseline`, `warn: restricted`, `audit: restricted`, and exempts `kube-system` (`KubeAdmissionControlConfig` `PodSecurity`). Workloads that need `hostPath` or privileged access need a namespace label like `pod-security.kubernetes.io/enforce: privileged`.
 
 ## Lessons learned (Kubernetes / tooling)
@@ -152,11 +169,11 @@ All Talos files are currently in `~/talos` in WSL, **outside this repo and unenc
 ## Open items / next steps
 
 1. Confirm DHCP reservations for `192.168.0.192` and `192.168.0.220` in the router.
-2. Back up `secrets.yaml` and `talosconfig` somewhere safe outside WSL.
-3. Decide on secrets handling (e.g. SOPS + age) and the repo layout, then move patches (including `nodes/`) and the Image Factory schematic into the repo with a `.gitignore` for plaintext secrets.
+2. Back up `talos/secrets.yaml` and `~/.talos/config` somewhere safe outside WSL. **Urgent**: the only copy of `secrets.yaml` is gitignored in the working tree.
+3. Decide on secrets handling (SOPS + age is the leading option, because Flux decrypts it natively), then commit `secrets.yaml` encrypted. Also add a script for the regenerate commands in "Cluster config".
 4. Choose a GitOps controller (Flux or Argo CD).
 5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded.
-6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`.
+6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`, then `feat/talos-config`.
 7. First `Cluster` `pg-main` in namespace `databases` (`databases/pg-main/`) with `instances: 1`, `storageClass: local-path` and Guaranteed QoS (size it for the 8 GB on `talos-ii`). Next, choose and set up backups (see "Decisions"), then scale to `instances: 2` with required pod anti-affinity.
-8. Record the `talos-ii` installer schematic (see "Versions").
+8. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
 9. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed.
