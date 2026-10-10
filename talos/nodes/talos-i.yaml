@@ -1,0 +1,10 @@
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: off
+hostname: talos-i
+---
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+provisioning:
+  diskSelector:
+    match: disk.serial == "19422B800421"

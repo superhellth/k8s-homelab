@@ -1,0 +1,21 @@
+apiVersion: v1alpha1
+kind: UnattendedInstallConfig
+installer:
+    image: factory.talos.dev/metal-installer/2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8:v1.14.2
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  maxSize: 80GiB
+---
+apiVersion: v1alpha1
+kind: UserVolumeConfig
+name: local-path-provisioner
+volumeType: partition
+provisioning:
+  diskSelector:
+    match: system_disk
+  maxSize: 120GiB
+filesystem:
+  type: xfs

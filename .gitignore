@@ -1,1 +1,3 @@
 .claude/
+talos/_out/
+talos/secrets.yaml
