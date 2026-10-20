@@ -1,3 +1,4 @@
 .claude/
 talos/_out/
 talos/secrets.yaml
+infrastructure/sealed-secrets/sealed-secrets-keys.yaml
