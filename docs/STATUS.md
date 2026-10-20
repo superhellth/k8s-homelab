@@ -1,10 +1,10 @@
 # Cluster status
 
-_Last updated: 2026-10-10_
+_Last updated: 2026-10-20_
 
 ## Summary
 
-Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested; the first Postgres `Cluster` is next. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed (see "Where things live").
+Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested, and the first Postgres `Cluster` (`pg-main`) is healthy with a primary on `talos-i` and a streaming replica on `talos-ii`. It has no backups yet. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed (see "Where things live").
 
 The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resize it, and etcd was re-bootstrapped (see "Disk layout" and "Lessons learned").
 
@@ -98,7 +98,7 @@ talos/                   machine config layer, applied with talosctl (not by a G
 infrastructure/          cluster-wide foundations (storage, operators, CRDs)
   local-path-provisioner/
   cnpg-operator/
-databases/               things that use the foundations (planned)
+databases/               things that use the foundations
   pg-main/
 ```
 
@@ -121,6 +121,16 @@ databases/               things that use the foundations (planned)
 - The operator pod already meets PSA `restricted`, so `cnpg-system` needs no namespace label.
 - The webhooks use `failurePolicy: Fail`: while the operator is not Ready, creating or changing any CNPG object is rejected.
 - The operator creates its own CA and webhook certificate (`cnpg-ca-secret`, `cnpg-webhook-cert`). Default images: `ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie` and `pgbouncer:1.25.2`.
+
+### pg-main (healthy since 2026-10-20)
+
+- `Cluster` `pg-main` in namespace `databases`, from `databases/pg-main/` (`kubectl apply -k databases/pg-main/`)
+- `instances: 2`, `podAntiAffinityType: required` (one instance per node), image `postgresql:18.6-system-trixie`
+- Guaranteed QoS: 500m CPU / 1Gi memory (requests = limits), `shared_buffers: 256MB`
+- Storage: `local-path`, 50Gi per instance. local-path does not enforce the size; the PVs share the 120 GiB partition with every other PV on the node. Reclaim policy `Delete` (from the StorageClass), and CNPG makes the `Cluster` the owner of its PVCs, so **deleting the `Cluster` deletes the data**.
+- Bootstrap: `initdb` with database `app`, owner `app`
+- Verified 2026-10-20: `Cluster in healthy state`, primary `pg-main-1` on `talos-i`, replica `pg-main-2` on `talos-ii`. Each PV is pinned to the node of its pod. `pg_stat_replication` on the primary shows `pg-main-2` as `streaming` / `async`, and the replica reports `pg_is_in_recovery() = t`.
+- History: the first attempt (2026-10-11) deadlocked and was deleted and recreated on 2026-10-20. See "Lessons learned (Kubernetes / tooling)".
 
 ### Decisions
 
@@ -165,6 +175,12 @@ The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). Th
 - The CNPG operator pod restarted once on first install (exit code 143 = SIGTERM, about 27 s after start, nothing wrong in the logs). Most likely cause: the startup probe (6 × 5 s) checks the webhook port, and the certificate Secret the operator had just created had not been synced into the pod yet (it is mounted `optional: true`, and the kubelet only syncs Secret volumes periodically). The second start worked. This is harmless on first install.
 - `kubectl rollout status deploy/<name>` waits until the Deployment's `.status` shows all replicas updated and Ready, and exits non-zero after `progressDeadlineSeconds` (600 s by default). Use it between applying an operator and applying its custom resources.
 - Heredocs: the end marker (`EOF`) must start at column 0, and `<<'EOF'` (quoted) stops the local shell from expanding `$(...)` inside the manifest.
+- The first `pg-main` (2026-10-11, same manifest) deadlocked for 8 days:
+  1. `pg-main-1` (primary) started on `talos-i`. The join job for `pg-main-2` stayed `Pending`: required anti-affinity ruled out `talos-i`, and `talos-ii` was evidently not schedulable.
+  2. Seven minutes later the kubelet on `talos-i` terminated `pg-main-1` (`DisruptionTarget`, `TerminationByKubelet`, most likely a node shutdown or reboot). The pod ended as `Succeeded` and was never restarted, despite `restartPolicy: Always`: a pod in a final phase is never restarted. CNPG creates pods directly (no StatefulSet), and the operator was busy in the "Creating a new replica" phase.
+  3. When `talos-ii` became `Ready` again (2026-10-20), the scheduler placed the join pod on `talos-i`: it ignores pods in a final phase for anti-affinity, so the dead primary no longer blocked that node. `WaitForFirstConsumer` then created `pg-main-2`'s PV on `talos-i`, which pinned the replica there for good.
+  4. The join pod retried `pg-main-rw:5432` (`connection refused`) while the operator waited for the join. Fix: the cluster held no data, so it was deleted (PVCs and PVs went with it) and re-applied while both nodes were `Ready`.
+  - Takeaways: create a cluster with required anti-affinity only while every node is `Ready`. With `WaitForFirstConsumer` and local volumes, the first scheduling decision is permanent. If a CNPG cluster sits in a "Creating …" phase, check the instance pods and job logs instead of waiting.
 
 ## Open items / next steps
 
@@ -172,8 +188,8 @@ The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). Th
 2. Back up `talos/secrets.yaml` and `~/.talos/config` somewhere safe outside WSL. **Urgent**: the only copy of `secrets.yaml` is gitignored in the working tree.
 3. Decide on secrets handling (SOPS + age is the leading option, because Flux decrypts it natively), then commit `secrets.yaml` encrypted. Also add a script for the regenerate commands in "Cluster config".
 4. Choose a GitOps controller (Flux or Argo CD).
-5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded.
+5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded. It was apparently not schedulable again from about 2026-10-11 until 2026-10-20 17:54 UTC (see the `pg-main` lesson). Now that `talos-ii` holds a Postgres replica, its reliability matters more.
 6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`, then `feat/talos-config`.
-7. First `Cluster` `pg-main` in namespace `databases` (`databases/pg-main/`) with `instances: 1`, `storageClass: local-path` and Guaranteed QoS (size it for the 8 GB on `talos-ii`). Next, choose and set up backups (see "Decisions"), then scale to `instances: 2` with required pod anti-affinity.
+7. Choose and set up backups for `pg-main` (see "Decisions"). Until then, a `kubectl delete cluster` (or a GitOps prune) loses the data. A cheap stopgap is to patch the two `pg-main` PVs to `persistentVolumeReclaimPolicy: Retain`.
 8. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
 9. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed.
