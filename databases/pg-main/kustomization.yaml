@@ -4,3 +4,4 @@ resources:
   - namespace.yaml
   - cluster.yaml
   - database-wg-app.yaml
+  - sealedsecret-wg-app.yaml
