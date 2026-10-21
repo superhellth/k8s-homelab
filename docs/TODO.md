@@ -1,3 +1,3 @@
 # To-Dos
 
-- define resource requests and limits for sealed secret controller
+- define resource requests and limits for sealed secret controller, cert-manager and barman

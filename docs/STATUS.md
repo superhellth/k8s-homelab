@@ -1,10 +1,10 @@
 # Cluster status
 
-_Last updated: 2026-10-20_
+_Last updated: 2026-10-21_
 
 ## Summary
 
-Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested, and the first Postgres `Cluster` (`pg-main`) is healthy with a primary on `talos-i` and a streaming replica on `talos-ii`. It has no backups yet. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed (see "Where things live").
+Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested, and the first Postgres `Cluster` (`pg-main`) is healthy with two instances, one per node (one primary and one streaming replica). It has no backups yet. It holds the app database `wg_app` with a CNPG-managed role whose password comes from a Sealed Secret. The Sealed Secrets controller is installed, and Kubernetes Secrets are committed only in sealed form. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed but are backed up (see "Where things live").
 
 The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resize it, and etcd was re-bootstrapped (see "Disk layout" and "Lessons learned").
 
@@ -98,8 +98,9 @@ talos/                   machine config layer, applied with talosctl (not by a G
 infrastructure/          cluster-wide foundations (storage, operators, CRDs)
   local-path-provisioner/
   cnpg-operator/
+  sealed-secrets/        sealed-secrets-keys.yaml is gitignored
 databases/               things that use the foundations
-  pg-main/
+  pg-main/               Cluster, Database, SealedSecret
 ```
 
 ### local-path-provisioner (installed 2026-10-10)
@@ -122,6 +123,18 @@ databases/               things that use the foundations
 - The webhooks use `failurePolicy: Fail`: while the operator is not Ready, creating or changing any CNPG object is rejected.
 - The operator creates its own CA and webhook certificate (`cnpg-ca-secret`, `cnpg-webhook-cert`). Default images: `ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie` and `pgbouncer:1.25.2`.
 
+### sealed-secrets (installed 2026-10-20)
+
+- Upstream `bitnami/sealed-secrets` v0.40.0 `controller.yaml`, referenced by URL in `infrastructure/sealed-secrets/kustomization.yaml`. No local patches.
+- Deployment `sealed-secrets-controller` in `kube-system`. It has no resource requests or limits yet (see `docs/TODO.md`).
+- The sealing key pair is the `kubernetes.io/tls` Secret `sealed-secrets-keygb2ln` in `kube-system`. It is exported to `infrastructure/sealed-secrets/sealed-secrets-keys.yaml` (gitignored, backed up). Without this key, no committed SealedSecret can be decrypted after a cluster rebuild.
+- Workflow: generate the Secret locally and seal it in one pipeline, so the plaintext never reaches the cluster or Git:
+  ```bash
+  kubectl create secret generic <name> -n <ns> --type <type> --from-literal=... --dry-run=client -o yaml \
+    | kubeseal --format yaml > <dir>/sealedsecret-<name>.yaml
+  ```
+  The ciphertext is bound to the name and namespace (default `strict` scope), so renaming means resealing. The controller only writes Secrets that it owns (ownerReference to the SealedSecret).
+
 ### pg-main (healthy since 2026-10-20)
 
 - `Cluster` `pg-main` in namespace `databases`, from `databases/pg-main/` (`kubectl apply -k databases/pg-main/`)
@@ -130,6 +143,12 @@ databases/               things that use the foundations
 - Storage: `local-path`, 50Gi per instance. local-path does not enforce the size; the PVs share the 120 GiB partition with every other PV on the node. Reclaim policy `Delete` (from the StorageClass), and CNPG makes the `Cluster` the owner of its PVCs, so **deleting the `Cluster` deletes the data**.
 - Bootstrap: `initdb` with database `app`, owner `app`
 - Verified 2026-10-20: `Cluster in healthy state`, primary `pg-main-1` on `talos-i`, replica `pg-main-2` on `talos-ii`. Each PV is pinned to the node of its pod. `pg_stat_replication` on the primary shows `pg-main-2` as `streaming` / `async`, and the replica reports `pg_is_in_recovery() = t`.
+- 2026-10-21 14:36 UTC: the primary role moved to `pg-main-2` (`talos-ii`), and `pg-main-1` (`talos-i`) was recreated as a replica. The cause was not recorded. Check the current primary with `kubectl get pods -n databases -L cnpg.io/instanceRole`, and connect through `pg-main-rw`, never through a pod name.
+- App database `wg_app` (added 2026-10-21):
+  - Role `wg_app` (login) under `spec.managed.roles` in the `Cluster`. Its password comes from the `kubernetes.io/basic-auth` Secret `pg-main-wg-app` (keys `username` and `password`, with a random 48-character hex password), which is created from `sealedsecret-wg-app.yaml`.
+  - `Database` resource `pg-main-wg-app` creates database `wg_app` owned by `wg_app`.
+  - Tables stay in the `public` schema. The database is the isolation boundary, and since PG 15 `public` is owned by `pg_database_owner` (here `wg_app`) with only `USAGE` for `PUBLIC`.
+  - Verified 2026-10-21: the SealedSecret is unsealed into a Secret owned by it, `managedRolesStatus` shows `wg_app` as `reconciled`, and the `Database` shows `APPLIED: true`. Retrieve the password with `kubectl get secret pg-main-wg-app -n databases -o jsonpath='{.data.password}' | base64 -d`.
 - History: the first attempt (2026-10-11) deadlocked and was deleted and recreated on 2026-10-20. See "Lessons learned (Kubernetes / tooling)".
 
 ### Decisions
@@ -143,8 +162,10 @@ databases/               things that use the foundations
 The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). The rule for what gets committed: sources without secrets are committed, generated files are not, and secrets are committed only once they are encrypted.
 
 - Committed: `patch-all.yaml`, `patch-controlplane.yaml`, `nodes/*.yaml`, `schematics/*.yaml`
-- Gitignored, **plaintext, only copy is in the working tree**:
-  - `talos/secrets.yaml`: cluster CAs and tokens. Losing it means losing admin access. It is not backed up yet, and `git clean -fdx` would delete it.
+- Committed in encrypted form: SealedSecrets (e.g. `databases/pg-main/sealedsecret-wg-app.yaml`)
+- Gitignored and plaintext in the working tree. **The secret files are backed up outside the working tree** (as of 2026-10-21):
+  - `talos/secrets.yaml`: cluster CAs and tokens. Losing it means losing admin access. `git clean -fdx` would delete the working-tree copy.
+  - `infrastructure/sealed-secrets/sealed-secrets-keys.yaml`: the Sealed Secrets controller's private key. It is needed to decrypt the committed SealedSecrets after a rebuild.
   - `talos/_out/`: generated machine configs (`controlplane.yaml`, `worker.yaml`, `talos-i.yaml`, `talos-ii.yaml`) and `talosconfig`. They all contain secrets and can be regenerated from the sources plus `secrets.yaml`.
 - `talosctl` uses `~/.talos/config` (context `super-hellthalos`, endpoint `192.168.0.192`, client cert expires 2027-10-05). `TALOSCONFIG` is not set.
 - kubeconfig merged into `~/.kube/config`
@@ -181,15 +202,20 @@ The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). Th
   3. When `talos-ii` became `Ready` again (2026-10-20), the scheduler placed the join pod on `talos-i`: it ignores pods in a final phase for anti-affinity, so the dead primary no longer blocked that node. `WaitForFirstConsumer` then created `pg-main-2`'s PV on `talos-i`, which pinned the replica there for good.
   4. The join pod retried `pg-main-rw:5432` (`connection refused`) while the operator waited for the join. Fix: the cluster held no data, so it was deleted (PVCs and PVs went with it) and re-applied while both nodes were `Ready`.
   - Takeaways: create a cluster with required anti-affinity only while every node is `Ready`. With `WaitForFirstConsumer` and local volumes, the first scheduling decision is permanent. If a CNPG cluster sits in a "Creating …" phase, check the instance pods and job logs instead of waiting.
+- Kustomize only renders files listed under `resources:`. A manifest in the directory that is not listed is silently skipped. Check with `kubectl kustomize <dir> | grep '^kind:'`.
+- `kubectl apply -k <dir> --dry-run=server` runs validation and admission webhooks without persisting anything. It is a good last check before a real apply. `--dry-run=client` never contacts the server.
+- A Secret's `type` is immutable, and the Sealed Secrets controller refuses to overwrite a Secret it does not own. A manually created or broken Secret with the same name must be deleted before the SealedSecret can take over.
+- Broken shell line continuations (`\` followed by a space) can silently drop flags like `--dry-run`. The `> file` redirect still truncates the target even if the pipeline fails, so write to a temporary file and `mv` it on success.
+- `ERROR: cannot execute ... in a read-only transaction` in `psql` means the session is on a hot-standby replica (`SELECT pg_is_in_recovery()` returns `t`). Writes, DDL, and `GRANT`/`REVOKE` must go to the primary (`pg-main-rw`). Schema privileges are per database, so `\c <db>` first.
 
 ## Open items / next steps
 
 1. Confirm DHCP reservations for `192.168.0.192` and `192.168.0.220` in the router.
-2. Back up `talos/secrets.yaml` and `~/.talos/config` somewhere safe outside WSL. **Urgent**: the only copy of `secrets.yaml` is gitignored in the working tree.
-3. Decide on secrets handling (SOPS + age is the leading option, because Flux decrypts it natively), then commit `secrets.yaml` encrypted. Also add a script for the regenerate commands in "Cluster config".
+2. ~~Back up the secret files~~ Done 2026-10-21 (see "Where things live"). `~/.talos/config` can be regenerated from `secrets.yaml`.
+3. Kubernetes Secrets use Sealed Secrets (decided 2026-10-20). Still open: whether to commit `talos/secrets.yaml` encrypted as well (it is not a Kubernetes object, so Sealed Secrets doesn't fit; SOPS + age would), and a script for the regenerate commands in "Cluster config".
 4. Choose a GitOps controller (Flux or Argo CD).
 5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded. It was apparently not schedulable again from about 2026-10-11 until 2026-10-20 17:54 UTC (see the `pg-main` lesson). Now that `talos-ii` holds a Postgres replica, its reliability matters more.
-6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`, then `feat/talos-config`.
+6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`, then `feat/talos-config`, then `feat/cnpg-database`.
 7. Choose and set up backups for `pg-main` (see "Decisions"). Until then, a `kubectl delete cluster` (or a GitOps prune) loses the data. A cheap stopgap is to patch the two `pg-main` PVs to `persistentVolumeReclaimPolicy: Retain`.
 8. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
 9. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed.
