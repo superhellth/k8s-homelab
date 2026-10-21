@@ -5,3 +5,5 @@ resources:
   - cluster.yaml
   - database-wg-app.yaml
   - sealedsecret-wg-app.yaml
+  - sealedsecret-r2-backup.yaml
+  - objectstore-r2.yaml

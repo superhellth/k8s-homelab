@@ -15,6 +15,12 @@ spec:
         passwordSecret:
           name: pg-main-wg-app
 
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: r2-store
+
   affinity:
     podAntiAffinityType: required
 
