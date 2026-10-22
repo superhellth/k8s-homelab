@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: pg-main-daily
+  namespace: databases
+spec:
+  schedule: "0 0 3 * * *"
+  backupOwnerReference: self
+  immediate: true
+  cluster:
+    name: pg-main
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io

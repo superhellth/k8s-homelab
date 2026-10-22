@@ -7,3 +7,4 @@ resources:
   - sealedsecret-wg-app.yaml
   - sealedsecret-r2-backup.yaml
   - objectstore-r2.yaml
+  - scheduledbackup-daily.yaml
