@@ -1,3 +1,4 @@
+---
 apiVersion: v1alpha1
 kind: KubeNodeConfig
 taints:
@@ -6,3 +7,25 @@ taints:
 labels:
   node.kubernetes.io/exclude-from-external-load-balancers:
     $patch: delete
+---
+# etcd: open a separate HTTP endpoint that only serves /metrics and /health.
+# This is the legacy v1alpha1 document (no apiVersion/kind).
+cluster:
+  etcd:
+    extraArgs:
+      listen-metrics-urls: http://0.0.0.0:2381
+---
+apiVersion: v1alpha1
+kind: KubeControllerManagerConfig
+extraArgs:
+  bind-address: 0.0.0.0
+---
+apiVersion: v1alpha1
+kind: KubeSchedulerConfig
+extraArgs:
+  bind-address: 0.0.0.0
+---
+apiVersion: v1alpha1
+kind: KubeProxyConfig
+config:
+  metricsBindAddress: 0.0.0.0:10249
