@@ -14,3 +14,19 @@ patches:
       - op: replace
         path: /spec/template/spec/containers/0/args/6
         value: --log-level=error
+  - target:
+      kind: Deployment
+      name: barman-cloud
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: barman-cloud
+      spec:
+        template:
+          spec:
+            containers:
+              - name: barman-cloud
+                resources:
+                  requests: { cpu: 10m, memory: 32Mi }
+                  limits: { memory: 64Mi }
