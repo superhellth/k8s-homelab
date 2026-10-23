@@ -9,8 +9,6 @@ kubeProxyReplacement: true
 k8sServiceHost: localhost
 k8sServicePort: 7445
 
-# Flannel also uses 8472; avoid the clash while both run during the cutover.
-tunnelPort: 8473
 # Talos mounts cgroupv2 itself and forbids loading kernel modules.
 cgroup:
   autoMount:
