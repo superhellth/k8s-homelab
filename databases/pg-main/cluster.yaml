@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/postgresql.cnpg.io/cluster_v1.json
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
@@ -6,7 +7,6 @@ metadata:
 spec:
   instances: 2
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
-
   managed:
     roles:
       - name: wg_app
@@ -14,20 +14,16 @@ spec:
         login: true
         passwordSecret:
           name: pg-main-wg-app
-
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
       parameters:
         barmanObjectName: r2-store
-
   affinity:
     podAntiAffinityType: required
-
   storage:
     storageClass: local-path
     size: 50Gi
-
   resources:
     requests:
       cpu: 500m
@@ -35,11 +31,9 @@ spec:
     limits:
       cpu: 500m
       memory: 1Gi
-
   postgresql:
     parameters:
       shared_buffers: 256MB
-
   bootstrap:
     initdb:
       database: app
