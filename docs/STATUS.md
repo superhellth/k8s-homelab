@@ -1,10 +1,10 @@
 # Cluster status
 
-_Last updated: 2026-10-21_
+_Last updated: 2026-10-23_
 
 ## Summary
 
-Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Each node has a dedicated 120 GiB data partition, and local-path-provisioner is installed on top of it as the default StorageClass. It is installed from Kustomize manifests in this repo (`infrastructure/`), and the end-to-end PVC test has passed. The CloudNativePG operator is installed and tested, and the first Postgres `Cluster` (`pg-main`) is healthy with two instances, one per node (one primary and one streaming replica). It has no backups yet. It holds the app database `wg_app` with a CNPG-managed role whose password comes from a Sealed Secret. The Sealed Secrets controller is installed, and Kubernetes Secrets are committed only in sealed form. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed but are backed up (see "Where things live").
+Two-node Talos cluster `super-hellthalos`: one control plane that also runs workloads (`talos-i`) and one worker (`talos-ii`, an old laptop). Both nodes report `Ready`. Everything in Kubernetes is deployed by **Flux v2.9.6** from the `main` branch of this repo (bootstrapped 2026-10-22); `main` is protected, so every change goes through a PR. Each node has a dedicated 120 GiB data partition, with local-path-provisioner on top of it as the default StorageClass. Installed infrastructure: local-path-provisioner, Sealed Secrets, cert-manager, the CloudNativePG operator, and the CNPG Barman Cloud plugin. The Postgres `Cluster` `pg-main` is healthy with two instances, one per node (one primary and one streaming replica). It archives WAL continuously and takes a daily base backup to Cloudflare R2, and it holds the app database `wg_app`. Kubernetes Secrets are committed only in sealed form. The Talos config (patches, per-node patches, Image Factory schematics) is in this repo under `talos/`; its secrets are not committed but are backed up (see "Where things live"). Control-plane metrics endpoints are exposed in preparation for Prometheus (2026-10-23).
 
 The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resize it, and etcd was re-bootstrapped (see "Disk layout" and "Lessons learned").
 
@@ -15,7 +15,7 @@ The cluster was rebuilt on 2026-10-09: EPHEMERAL was wiped on both nodes to resi
 | Role | control plane (workloads allowed, no taint) | worker (ROLES shows `<none>`, see below) |
 | IP | `192.168.0.192/24` | `192.168.0.220/24` |
 | Gateway/DNS | `192.168.0.1` | `192.168.0.1` |
-| DHCP reservation in router | **not yet confirmed** | **not yet confirmed** |
+| DHCP reservation in router | yes | yes |
 | Hardware | Intel i5 (6 logical CPUs), 16 GB RAM | Acer Aspire E5-571G laptop, 4 logical CPUs, 8 GB RAM |
 | Install disk | `/dev/nvme0n1`: WDC PC SN730 256 GB, serial `19422B800421` | `/dev/sda`: Samsung SSD 850 250 GB (SATA) |
 | Previous OS | Windows (wiped by the Talos install) | wiped by the Talos install |
@@ -30,6 +30,7 @@ The worker has no `node-role.kubernetes.io/*` label because the NodeRestriction 
 | Kubernetes | v1.37.1 (both nodes) |
 | containerd | 2.3.6 |
 | kubectl (WSL) | v1.37.1 |
+| Flux | v2.9.6 (source-controller v1.9.6, kustomize-controller v1.9.6, helm-controller v1.6.5, notification-controller v1.9.4) |
 | Image Factory schematic (`talos-i`) | `2d61dd07b20062062ea671b4d01873506103b67c0f7a4c3fb6cf4ee85585dcb8`, source `talos/schematics/default.yaml` |
 | Image Factory schematic (`talos-ii`) | `4b3cd373a192c8469e859b7a0cfbed3ecc3577c4a2d346a37b0aeff9cd17cdb0`, source `talos/schematics/talos-ii.yaml` |
 
@@ -59,7 +60,9 @@ Installer image: `factory.talos.dev/metal-installer/<schematic>:v1.14.2`. Both s
   - `UnattendedInstallConfig` with the Factory installer image
   - `VolumeConfig` `EPHEMERAL` with `provisioning.maxSize: 80GiB`. This merges into the default `VolumeConfig` that `gen config` emits (which only sets `mount.secure: true`), because Talos matches documents by kind + name.
   - `UserVolumeConfig` `local-path-provisioner`: `volumeType: partition`, disk selector `system_disk`, `maxSize: 120GiB`, filesystem `xfs`. The `system_disk` selector matches the install disk on both nodes, even though one is NVMe and the other SATA.
-- `patch-controlplane.yaml`: `KubeNodeConfig` deleting the `node-role.kubernetes.io/control-plane` taint and the `node.kubernetes.io/exclude-from-external-load-balancers` label
+- `patch-controlplane.yaml`:
+  - `KubeNodeConfig` deleting the `node-role.kubernetes.io/control-plane` taint and the `node.kubernetes.io/exclude-from-external-load-balancers` label
+  - Metrics endpoints for Prometheus (added 2026-10-23, see "Control-plane metrics endpoints")
 - Per-node patches in `nodes/` set what differs between machines. They are applied on top of the base config to produce `_out/talos-i.yaml` and `_out/talos-ii.yaml`:
   - `nodes/talos-i.yaml`: `HostnameConfig` (`talos-i`), disk selector `disk.serial == "19422B800421"`
   - `nodes/talos-ii.yaml`: `HostnameConfig` (`talos-ii`), disk selector `disk.transport == "sata"`, installer image override (see "Versions")
@@ -70,6 +73,47 @@ Installer image: `factory.talos.dev/metal-installer/<schematic>:v1.14.2`. Both s
   talosctl machineconfig patch _out/worker.yaml       --patch @nodes/talos-ii.yaml -o _out/talos-ii.yaml
   talosctl -n <ip> apply-config -f _out/<node>.yaml --dry-run   # review the diff, then run again without --dry-run
   ```
+  All three steps are needed. `gen config` alone only refreshes `controlplane.yaml` and `worker.yaml`; the per-node files stay stale, and a dry-run against them reports `No changes.` (happened on 2026-10-23). `worker.yaml` cannot be applied directly: it has no disk selector, so Talos rejects it with `provisioning.diskSelector.match is required`. Never apply `talos-i.yaml` to `talos-ii`: it is a complete control-plane config with talos-i's hostname, and its dry-run shows a large, seemingly unrelated diff.
+- In `--patch @file`, `--config-patch @file` the `@` means "read from this file". Without it, the argument itself is parsed as the patch (useful for inline one-off patches). Same convention as `curl --data-binary @file`.
+
+### Control-plane metrics endpoints (2026-10-23)
+
+By default Talos binds controller-manager, scheduler, and kube-proxy metrics to `127.0.0.1`, and etcd serves no plain metrics endpoint at all (its metrics on `:2379` need an etcd client certificate, which would also grant full read/write on the cluster state). Prometheus scrapes from a pod IP, so all of these would show as down. Appended to `patch-controlplane.yaml`:
+
+```yaml
+cluster:                       # legacy v1alpha1 document; etcd still lives here in 1.14
+  etcd:
+    extraArgs:
+      listen-metrics-urls: http://0.0.0.0:2381
+---
+apiVersion: v1alpha1
+kind: KubeControllerManagerConfig
+extraArgs:
+  bind-address: 0.0.0.0
+---
+apiVersion: v1alpha1
+kind: KubeSchedulerConfig
+extraArgs:
+  bind-address: 0.0.0.0        # not a KubeSchedulerConfiguration field, so it has to be a flag
+---
+apiVersion: v1alpha1
+kind: KubeProxyConfig
+config:
+  metricsBindAddress: 0.0.0.0:10249   # kube-proxy reads a config file; most flags have no effect
+```
+
+| Endpoint | Port | Protocol / auth |
+|---|---|---|
+| kube-controller-manager | `talos-i:10257` | HTTPS, delegated authn/authz: anonymous requests get 403, Prometheus uses its ServiceAccount token |
+| kube-scheduler | `talos-i:10259` | same as controller-manager |
+| etcd | `talos-i:2381` | plain HTTP, unauthenticated, only `/metrics` and `/health` |
+| kube-proxy | `<node>:10249` (both nodes) | plain HTTP, unauthenticated |
+
+- Everything goes in the control-plane patch, including kube-proxy: it runs on both nodes, but it is a DaemonSet that the control plane deploys from its machine config. `talos-ii`'s machine config is unchanged.
+- `0.0.0.0` (in practice dual-stack `:::`) exposes the ports on every interface, including the public SLAAC IPv6 addresses. Accepted because the unauthenticated endpoints are read-only metrics, and the router is expected to block inbound IPv6 (to be confirmed with the ingress work). The alternative was binding to the node IP via per-node patches.
+- The static pods carry the labels kube-prometheus-stack selects on by default (`component=kube-controller-manager`, `component=kube-scheduler`, `k8s-app=kube-proxy`).
+- Rollout behavior (see "Lessons learned (Talos 1.14)"): controller-manager and scheduler picked up the change immediately; etcd needed a restart (talos-i was rebooted); kube-proxy needed `talosctl -n 192.168.0.192 upgrade-k8s --to 1.37.1`.
+- Verified 2026-10-23 from a pod: `:2381/metrics` returns `etcd_server_has_leader 1`, `:10249/metrics` returns 200 on both nodes, `:10257` and `:10259` return 403 without a token.
 
 ## Disk layout
 
@@ -86,22 +130,39 @@ The user volume is mounted at `/var/mnt/local-path-provisioner` on both nodes (c
 
 ## Kubernetes workloads
 
-Until a GitOps controller is chosen, manifests live in this repo as Kustomize directories and are applied by hand with `kubectl apply -k <dir>`. A GitOps controller can take over the same directories later. Upstream manifests are referenced by URL with a pinned tag, not copied into the repo, and only local patches are committed.
+Manifests live in this repo as Kustomize directories, and Flux applies them (see "Flux"). Upstream manifests are referenced by URL with a pinned tag, not copied into the repo, and only local patches are committed. The component sections below still mention the original manual `kubectl apply` commands from before Flux; they are history, not the current workflow.
 
 Repo layout (one directory per component, top-level directories ordered by dependency):
 ```
-talos/                   machine config layer, applied with talosctl (not by a GitOps controller)
+talos/                   machine config layer, applied with talosctl (not by Flux)
   patch-all.yaml, patch-controlplane.yaml
   nodes/                 per-node patches
   schematics/            Image Factory schematics
   _out/, secrets.yaml    gitignored
+clusters/super-hellthalos/
+  flux-system/           Flux components and sync, generated by `flux bootstrap` (do not edit)
+  infrastructure.yaml    one Flux Kustomization per infrastructure component
+  databases.yaml         Flux Kustomization for pg-main
 infrastructure/          cluster-wide foundations (storage, operators, CRDs)
   local-path-provisioner/
-  cnpg-operator/
   sealed-secrets/        sealed-secrets-keys.yaml is gitignored
+  cert-manager/
+  cnpg-operator/
+  cnpg-barman-plugin/
 databases/               things that use the foundations
-  pg-main/               Cluster, Database, SealedSecret
+  pg-main/               Cluster, Database, ObjectStore, ScheduledBackup, SealedSecrets
+docs/                    STATUS.md (this file), TODO.md
 ```
+
+### Flux (bootstrapped 2026-10-22)
+
+- Flux v2.9.6, bootstrapped from `ssh://git@github.com/superhellth/k8s-homelab`, branch `main`, path `clusters/super-hellthalos`. All four controllers run in `flux-system`; helm-controller is installed but not used yet.
+- `main` is protected: changes go through PRs, and Flux only reconciles what is merged. Force a sync after a merge with `flux reconcile kustomization <name> --with-source`.
+- The `flux-system` Kustomization reconciles `clusters/super-hellthalos/`. Flux generates the kustomization for that directory itself, so every YAML file placed there is picked up. Each file holds one Flux `Kustomization` per component, pointing at `./infrastructure/<component>` or `./databases/pg-main`, with `prune: true`, `wait: true`, `interval: 1h`, `retryInterval: 2m`, `timeout: 5m`.
+- Ordering uses `dependsOn`: `cnpg-barman-plugin` depends on `cert-manager` and `cnpg-operator`; `pg-main` depends on `local-path-provisioner`, `cnpg-operator`, `cnpg-barman-plugin`, and `sealed-secrets`. With `wait: true`, a Kustomization only counts as Ready once its objects are healthy, so dependents wait for running operators, not just applied manifests.
+- **Prune protection:** `prune: true` deletes objects that disappear from Git, and deleting or renaming a Flux Kustomization prunes everything it applied. Deleting a CRD deletes every custom resource of that type, so Kustomizations that ship CRDs patch them with `kustomize.toolkit.fluxcd.io/prune: disabled`. The `pg-main` Kustomization does the same for the `Cluster` and the `Namespace` (pg-main was handed over to Flux on 2026-10-23). The key must be exactly `kustomize.toolkit.fluxcd.io/prune`; `kustomize.toolkit.io/...` is silently ignored.
+- kustomize-controller always uses server-side apply, so the CNPG CRDs (too big for client-side apply) need no special handling under Flux.
+- Render exactly what Flux will apply, including the Kustomization's patches: `flux build kustomization <name> --path ./infrastructure/<dir> --kustomization-file ./clusters/super-hellthalos/infrastructure.yaml --dry-run`.
 
 ### local-path-provisioner (installed 2026-10-10)
 
@@ -134,35 +195,60 @@ databases/               things that use the foundations
     | kubeseal --format yaml > <dir>/sealedsecret-<name>.yaml
   ```
   The ciphertext is bound to the name and namespace (default `strict` scope), so renaming means resealing. The controller only writes Secrets that it owns (ownerReference to the SealedSecret).
+- Cluster rebuild: `kubectl apply` the key backup **before** Flux deploys the controller. Otherwise the controller generates a new key, and the committed SealedSecrets cannot be decrypted.
+
+### cert-manager (installed 2026-10-21)
+
+- Upstream `cert-manager.yaml` v1.21.2, referenced by URL in `infrastructure/cert-manager/kustomization.yaml`. No local patches.
+- Deployments `cert-manager`, `cert-manager-cainjector`, and `cert-manager-webhook` in namespace `cert-manager`.
+- Installed because the Barman Cloud plugin needs it: the plugin's gRPC connection to the CNPG operator uses mTLS certificates that cert-manager issues.
+- No resource requests or limits yet (see `docs/TODO.md`).
+
+### cnpg-barman-plugin (installed 2026-10-21)
+
+- Upstream `plugin-barman-cloud` v0.15.1 `manifest.yaml`, referenced by URL in `infrastructure/cnpg-barman-plugin/kustomization.yaml`. Deployment `barman-cloud` in `cnpg-system`, plus the `ObjectStore` CRD (`barmancloud.cnpg.io/v1`).
+- One local JSON patch lowers the log level from `debug` to `error`. It starts with an `op: test` on `args[6]`, so the render fails loudly if a future upstream release moves the argument, instead of silently replacing the wrong one.
+- This is CNPG's CNPG-I plugin architecture: the operator talks to the plugin over gRPC, and the plugin injects a sidecar into each instance pod that ships WAL and base backups to object storage. It replaces the in-tree `barmanObjectStore` field, which is deprecated.
+- No resource requests or limits yet (see `docs/TODO.md`).
 
 ### pg-main (healthy since 2026-10-20)
 
-- `Cluster` `pg-main` in namespace `databases`, from `databases/pg-main/` (`kubectl apply -k databases/pg-main/`)
+- `Cluster` `pg-main` in namespace `databases`, from `databases/pg-main/`. Applied manually until 2026-10-23, since then reconciled by the Flux Kustomization `pg-main` (`clusters/super-hellthalos/databases.yaml`), with prune disabled for the `Cluster` and the `Namespace`.
 - `instances: 2`, `podAntiAffinityType: required` (one instance per node), image `postgresql:18.6-system-trixie`
 - Guaranteed QoS: 500m CPU / 1Gi memory (requests = limits), `shared_buffers: 256MB`
 - Storage: `local-path`, 50Gi per instance. local-path does not enforce the size; the PVs share the 120 GiB partition with every other PV on the node. Reclaim policy `Delete` (from the StorageClass), and CNPG makes the `Cluster` the owner of its PVCs, so **deleting the `Cluster` deletes the data**.
 - Bootstrap: `initdb` with database `app`, owner `app`
 - Verified 2026-10-20: `Cluster in healthy state`, primary `pg-main-1` on `talos-i`, replica `pg-main-2` on `talos-ii`. Each PV is pinned to the node of its pod. `pg_stat_replication` on the primary shows `pg-main-2` as `streaming` / `async`, and the replica reports `pg_is_in_recovery() = t`.
-- 2026-10-21 14:36 UTC: the primary role moved to `pg-main-2` (`talos-ii`), and `pg-main-1` (`talos-i`) was recreated as a replica. The cause was not recorded. Check the current primary with `kubectl get pods -n databases -L cnpg.io/instanceRole`, and connect through `pg-main-rw`, never through a pod name.
+- 2026-10-21 14:36 UTC: the primary role moved to `pg-main-2` (`talos-ii`), and `pg-main-1` (`talos-i`) was recreated as a replica. The cause was not recorded. The primary was later back on `pg-main-1`.
+- 2026-10-23 ~16:57 UTC: rebooting `talos-i` (to restart etcd) left `pg-main-1`, then primary, in phase `Completed`. Once the API server and the CNPG operator were back (~3 minutes), the operator promoted `pg-main-2` (`talos-ii`) and recreated `pg-main-1` as a replica; the cluster was healthy again within seconds after that. While `talos-i` was down, nothing could be promoted, because failover goes through the API server. Check the current primary with `kubectl get pods -n databases -L cnpg.io/instanceRole`, and connect through `pg-main-rw`, never through a pod name.
 - App database `wg_app` (added 2026-10-21):
   - Role `wg_app` (login) under `spec.managed.roles` in the `Cluster`. Its password comes from the `kubernetes.io/basic-auth` Secret `pg-main-wg-app` (keys `username` and `password`, with a random 48-character hex password), which is created from `sealedsecret-wg-app.yaml`.
   - `Database` resource `pg-main-wg-app` creates database `wg_app` owned by `wg_app`.
   - Tables stay in the `public` schema. The database is the isolation boundary, and since PG 15 `public` is owned by `pg_database_owner` (here `wg_app`) with only `USAGE` for `PUBLIC`.
   - Verified 2026-10-21: the SealedSecret is unsealed into a Secret owned by it, `managedRolesStatus` shows `wg_app` as `reconciled`, and the `Database` shows `APPLIED: true`. Retrieve the password with `kubectl get secret pg-main-wg-app -n databases -o jsonpath='{.data.password}' | base64 -d`.
+- Backups (set up 2026-10-21/22) through the Barman Cloud plugin:
+  - `ObjectStore` `r2-store`: Cloudflare R2 bucket `k8s-pg-backups` (S3 API), credentials from the Secret `r2-backup-creds` (created from `sealedsecret-r2-backup.yaml`). WAL compressed with `zstd` (`maxParallel: 2`), base backups with `gzip`. `retentionPolicy: 30d`.
+  - The `Cluster` references it under `spec.plugins` with `isWALArchiver: true`, so every WAL segment is archived continuously. Together with base backups this allows point-in-time recovery, not just restoring the last dump.
+  - `ScheduledBackup` `pg-main-daily`: `schedule: "0 0 3 * * *"` (six fields, the first is seconds; 03:00 UTC daily), `method: plugin`, `immediate: true` (one backup right after creation), `backupOwnerReference: self`.
+  - Verified 2026-10-23: two `Backup` objects in phase `completed` (2026-10-22 18:50 UTC, the immediate one, and 2026-10-23 03:00 UTC), and the `Cluster` conditions show `ContinuousArchiving=True` and `LastBackupSucceeded=True`.
+  - **A restore has not been tested yet** (see "Open items").
 - History: the first attempt (2026-10-11) deadlocked and was deleted and recreated on 2026-10-20. See "Lessons learned (Kubernetes / tooling)".
 
 ### Decisions
 
 - **CNPG runs in this cluster, not a separate one.** A second cluster would double the control-plane overhead and split the two nodes into two single-node clusters. Isolation happens inside the cluster instead: own namespace, Guaranteed QoS (requests = limits) for Postgres pods, optionally a PriorityClass. Flannel does not enforce NetworkPolicies, so network isolation needs a CNI change (e.g. Cilium).
 - **Known limits of this setup:** etcd and Postgres share the NVMe on `talos-i` (watch for `slow fdatasync` warnings from etcd). CNPG failover runs through the API server, so if `talos-i` (the only control plane) dies, a replica on `talos-ii` is **not** promoted automatically.
-- **Backups:** not decided yet, but they can't rely on volume snapshots, because local-path doesn't support them. Candidates: CNPG Barman Cloud plugin (WAL + base backups to object storage), `pg_dump`, Velero file-level (Kopia).
+- **Backups: CNPG Barman Cloud plugin to Cloudflare R2** (decided 2026-10-21). Volume snapshots are not an option, because local-path doesn't support them. The plugin gives continuous WAL archiving plus base backups, so point-in-time recovery, and the data leaves the house. The alternatives were `pg_dump` (only point-in-time snapshots, no WAL) and Velero file-level backups with Kopia (not consistent for a running database without extra hooks).
+- **GitOps: Flux** (bootstrapped 2026-10-22), not Argo CD. The reasons were not recorded at the time. Relevant differences for this setup: Flux has no UI or API server of its own (less RAM), and everything is a CRD reconciled by a controller; Argo CD offers a web UI for visualizing sync state.
+- **Control-plane metrics on `0.0.0.0`** (2026-10-23), see "Control-plane metrics endpoints".
 
 ## Where things live
 
 The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). The rule for what gets committed: sources without secrets are committed, generated files are not, and secrets are committed only once they are encrypted.
 
 - Committed: `patch-all.yaml`, `patch-controlplane.yaml`, `nodes/*.yaml`, `schematics/*.yaml`
-- Committed in encrypted form: SealedSecrets (e.g. `databases/pg-main/sealedsecret-wg-app.yaml`)
+- Committed in encrypted form: SealedSecrets (`databases/pg-main/sealedsecret-wg-app.yaml`, `databases/pg-main/sealedsecret-r2-backup.yaml`)
+- Not committed: `.claude/` is gitignored, so `.claude/CLAUDE.md` (instructions for Claude Code) exists only in the working tree.
 - Gitignored and plaintext in the working tree. **The secret files are backed up outside the working tree** (as of 2026-10-21):
   - `talos/secrets.yaml`: cluster CAs and tokens. Losing it means losing admin access. `git clean -fdx` would delete the working-tree copy.
   - `infrastructure/sealed-secrets/sealed-secrets-keys.yaml`: the Sealed Secrets controller's private key. It is needed to decrypt the committed SealedSecrets after a rebuild.
@@ -185,6 +271,12 @@ The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). Th
 - `POST https://factory.talos.dev/schematics` with the YAML returns its ID (`curl -sX POST --data-binary @file.yaml ...`; `@` means "read from file", and `--data-binary` keeps newlines, which `-d` strips). An empty body returns just `EOF`. `GET /schematics/<id>` returns the stored YAML for any existing ID.
 - In `talosctl get extensions`, `schematic` (the running schematic ID) and `modules.dep` (kernel module index rebuilt because an extension, here `i915`, ships kernel modules) are generated entries, not extensions to put in a schematic.
 - Changing `installer.image` in the machine config does not change the running OS. It only takes effect on the next install or `talosctl upgrade --image ...`. Upgrading with the wrong schematic ID silently removes extensions.
+- Applying a machine config change does not restart every affected component:
+  - **Static pods** (kube-apiserver, kube-controller-manager, kube-scheduler): Talos rewrites the manifest and the kubelet recreates the pod immediately.
+  - **etcd** is a Talos service, not a pod. Talos updates the etcd spec (`talosctl get etcdspecs`), but the running process keeps its old flags until etcd restarts (check with `talosctl processes`). On a single control plane this means a short API outage.
+  - **Bootstrap manifests** (kube-proxy, Flannel, CoreDNS): Talos creates objects that are missing but does not update existing ones. kube-proxy's ConfigMap is named after a hash of its content, so a config change produced a new ConfigMap while the DaemonSet kept mounting the old one. `talosctl upgrade-k8s --to <current version>` syncs the manifests (it walks through every component, but at the same version only the manifest diff matters). It also prunes objects that are no longer in the manifests, using the inventory recorded in the `config.k8s.io/owning-inventory: talos-bootstrap-manifests-inventory` annotation, so the old ConfigMap was deleted automatically.
+  - Naming a ConfigMap after its content hash is a deliberate pattern: pods do not restart when a mounted ConfigMap changes, but a new name changes the pod template and triggers a rolling update (Kustomize's `configMapGenerator` does the same).
+- `talosctl docs <dir> --config` writes the full machine config reference for the installed `talosctl` version as Markdown. Useful for checking field names offline.
 - Talos enables Pod Security Admission cluster-wide with `enforce: baseline`, `warn: restricted`, `audit: restricted`, and exempts `kube-system` (`KubeAdmissionControlConfig` `PodSecurity`). Workloads that need `hostPath` or privileged access need a namespace label like `pod-security.kubernetes.io/enforce: privileged`.
 
 ## Lessons learned (Kubernetes / tooling)
@@ -206,16 +298,20 @@ The Talos files moved from `~/talos` into `talos/` in this repo (2026-10-10). Th
 - `kubectl apply -k <dir> --dry-run=server` runs validation and admission webhooks without persisting anything. It is a good last check before a real apply. `--dry-run=client` never contacts the server.
 - A Secret's `type` is immutable, and the Sealed Secrets controller refuses to overwrite a Secret it does not own. A manually created or broken Secret with the same name must be deleted before the SealedSecret can take over.
 - Broken shell line continuations (`\` followed by a space) can silently drop flags like `--dry-run`. The `> file` redirect still truncates the target even if the pipeline fails, so write to a temporary file and `mv` it on success.
+- After a reboot of `talos-i` (2026-10-23), operators that started before the API server was reachable (CNPG operator, Flux notification-controller) exited with `dial tcp 10.96.0.1:443: connect: connection refused` and went into `CrashLoopBackOff`. They recovered on their own once the API was up (~3 minutes); Flux Kustomizations briefly showed `Source artifact not found`. No action needed, but don't panic at the first `kubectl get pods`.
+- Pods that were running when a node shut down end in a final phase (`Completed`) and are replaced by their ReplicaSet, not restarted. The old pods stay around as clutter until deleted (several in `kube-system`, `cnpg-system`, `flux-system`).
+- `kubectl run -i --rm` can lose the first lines of output: kubectl only attaches after the container has started ("If you don't see a command prompt…"). For a short test, run the pod without `-i`, wait for `Succeeded`, and read `kubectl logs`.
 - `ERROR: cannot execute ... in a read-only transaction` in `psql` means the session is on a hot-standby replica (`SELECT pg_is_in_recovery()` returns `t`). Writes, DDL, and `GRANT`/`REVOKE` must go to the primary (`pg-main-rw`). Schema privileges are per database, so `\c <db>` first.
 
 ## Open items / next steps
 
-1. Confirm DHCP reservations for `192.168.0.192` and `192.168.0.220` in the router.
-2. ~~Back up the secret files~~ Done 2026-10-21 (see "Where things live"). `~/.talos/config` can be regenerated from `secrets.yaml`.
-3. Kubernetes Secrets use Sealed Secrets (decided 2026-10-20). Still open: whether to commit `talos/secrets.yaml` encrypted as well (it is not a Kubernetes object, so Sealed Secrets doesn't fit; SOPS + age would), and a script for the regenerate commands in "Cluster config".
-4. Choose a GitOps controller (Flux or Argo CD).
-5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded. It was apparently not schedulable again from about 2026-10-11 until 2026-10-20 17:54 UTC (see the `pg-main` lesson). Now that `talos-ii` holds a Postgres replica, its reliability matters more.
-6. Merge the stacked branches into `main` in order: `feat/local-path-provisioner`, then `feat/cnpg-operator`, then `feat/talos-config`, then `feat/cnpg-database`.
-7. Choose and set up backups for `pg-main` (see "Decisions"). Until then, a `kubectl delete cluster` (or a GitOps prune) loses the data. A cheap stopgap is to patch the two `pg-main` PVs to `persistentVolumeReclaimPolicy: Retain`.
-8. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
-9. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed.
+1. **Prometheus** (in progress on `feat/prometheus`): kube-prometheus-stack via a Flux `HelmRelease`. Done: control-plane metrics endpoints. Still to do: a `monitoring` namespace with `pod-security.kubernetes.io/enforce: privileged` (node-exporter needs `hostNetwork`, `hostPID`, `hostPath`), the chart source (OCI) and pinned version, CRD handling (`install.crds`/`upgrade.crds: CreateReplace` or a separate CRD chart), Prometheus storage and retention on `talos-i`, Grafana admin password as a SealedSecret, and a `PodMonitor` for `pg-main`.
+2. **Test a restore** of `pg-main` from R2, e.g. bootstrap a temporary second `Cluster` with `bootstrap.recovery` from `r2-store`. Backups that were never restored are not proven to work.
+3. Kubernetes Secrets use Sealed Secrets (decided 2026-10-20). Still open: whether to commit `talos/secrets.yaml` encrypted as well (it is not a Kubernetes object, so Sealed Secrets doesn't fit; SOPS + age would), and a script for the regenerate commands in "Cluster config" (half-run regenerations happened on 2026-10-23).
+4. Resource requests and limits for the sealed-secrets controller, cert-manager, and the Barman Cloud plugin (see `docs/TODO.md`).
+5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded. It was apparently not schedulable again from about 2026-10-11 until 2026-10-20 17:54 UTC (see the `pg-main` lesson). Now that `talos-ii` holds a Postgres replica (currently the primary), its reliability matters more.
+6. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
+7. Clean up the `Completed` pods left over from node shutdowns, and the local branches that are already merged into `main` (`feat/local-path-provisioner`, `feat/cnpg-operator`, `feat/talos-config`, `feat/cnpg-database`, `feat/flux`).
+8. Later: ingress/load balancer, CNI choice (keep Flannel or move to Cilium; Flannel does not enforce NetworkPolicies), metrics-server (`kubectl top` currently fails with "Metrics API not available"). The nodes also get public IPv6 addresses (SLAAC) from the router, which matters once services are exposed; confirm the router blocks inbound IPv6.
+
+Done: DHCP reservations for both nodes; secret files backed up (2026-10-21); GitOps controller chosen and bootstrapped (Flux, 2026-10-22); stacked branches merged into `main`; backups for `pg-main` (Barman Cloud to R2, 2026-10-22).
