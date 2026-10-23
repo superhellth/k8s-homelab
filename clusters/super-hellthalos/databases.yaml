@@ -1,0 +1,41 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: pg-main
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: local-path-provisioner
+    - name: cnpg-operator
+    - name: cnpg-barman-plugin
+    - name: sealed-secrets
+  interval: 1h
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./databases/pg-main
+  prune: true
+  wait: true
+  patches:
+    - target:
+        kind: Cluster
+        group: postgresql.cnpg.io
+      patch: |
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata:
+          name: not-used
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
+    - target:
+        kind: Namespace
+      patch: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: not-used
+          annotations:
+            kustomize.toolkit.fluxcd.io/prune: disabled
