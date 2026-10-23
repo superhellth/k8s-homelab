@@ -3,7 +3,7 @@ apiVersion: v1alpha1
 kind: KubeNodeConfig
 taints:
   node-role.kubernetes.io/control-plane:
-      $patch: delete
+    $patch: delete
 labels:
   node.kubernetes.io/exclude-from-external-load-balancers:
     $patch: delete
@@ -25,7 +25,11 @@ kind: KubeSchedulerConfig
 extraArgs:
   bind-address: 0.0.0.0
 ---
+# Cilium replaces kube-proxy (kubeProxyReplacement) and Flannel
 apiVersion: v1alpha1
 kind: KubeProxyConfig
-config:
-  metricsBindAddress: 0.0.0.0:10249
+enabled: false
+---
+apiVersion: v1alpha1
+kind: KubeFlannelCNIConfig
+$patch: delete
