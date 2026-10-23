@@ -1,0 +1,46 @@
+# Talos: pod CIDRs come from the node objects
+ipam:
+  mode: kubernetes
+
+# Replace kube-proxy with eBPF service handling. Without kube-proxy the
+# "kubernetes" Service can't be resolved yet, so reach the API server through
+# KubePrism (Talos' node-local API load balancer).
+kubeProxyReplacement: true
+k8sServiceHost: localhost
+k8sServicePort: 7445
+
+# Flannel also uses 8472; avoid the clash while both run during the cutover.
+tunnelPort: 8473
+# Talos mounts cgroupv2 itself and forbids loading kernel modules.
+cgroup:
+  autoMount:
+    enabled: false
+  hostRoot: /sys/fs/cgroup
+securityContext:
+  capabilities:
+    ciliumAgent:
+      [
+        CHOWN,
+        KILL,
+        NET_ADMIN,
+        NET_RAW,
+        IPC_LOCK,
+        SYS_ADMIN,
+        SYS_RESOURCE,
+        DAC_OVERRIDE,
+        FOWNER,
+        SETGID,
+        SETUID,
+        SYSLOG,
+      ]
+    cleanCiliumState: [NET_ADMIN, SYS_ADMIN, SYS_RESOURCE]
+
+resources:
+  requests: { cpu: 100m, memory: 256Mi }
+  limits: { memory: 1Gi }
+
+operator:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
