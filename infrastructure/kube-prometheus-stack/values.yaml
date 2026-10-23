@@ -8,6 +8,8 @@ grafana:
     enabled: true
     storageClassName: local-path
     size: 1Gi
+  initChownData:
+    enabled: false
   resources:
     requests:
       cpu: 50m
