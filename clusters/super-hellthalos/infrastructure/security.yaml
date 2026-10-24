@@ -49,3 +49,22 @@ spec:
           name: not-used
           annotations:
             kustomize.toolkit.fluxcd.io/prune: disabled
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cert-manager-config
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: cert-manager
+    - name: sealed-secrets
+  interval: 1h
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/cert-manager-config
+  prune: true
+  wait: true
