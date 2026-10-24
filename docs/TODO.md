@@ -1,5 +1,4 @@
 # To-Dos
 
-- define resource requests and limits for sealed secret controller, cert-manager and barman
 - wg-app
-- cilium
+- atm cilium stuff leads to setup (cluster bootstrap) not working out of the box, find GitOps solution
