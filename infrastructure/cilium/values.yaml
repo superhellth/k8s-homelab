@@ -42,3 +42,13 @@ operator:
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { memory: 256Mi }
+
+l2announcements:
+  enabled: true
+# L2 announcements hold one Lease per service and renew it constantly;
+# the default client budget (10 qps / 20 burst) is shared with everything else the agent does.
+k8sClientRateLimit:
+  qps: 20
+  burst: 40
+gatewayAPI:
+  enabled: true
