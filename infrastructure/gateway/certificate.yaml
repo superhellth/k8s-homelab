@@ -7,7 +7,7 @@ spec:
   secretName: wildcard-tls
   issuerRef:
     kind: ClusterIssuer
-    name: letsencrypt-staging
+    name: letsencrypt-prod
   dnsNames:
     - "*.k8s.superhellth.com"
     - "*.superhellth.com"

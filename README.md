@@ -80,7 +80,7 @@ flux bootstrap git \
 
 Flux generates a new SSH deploy key and asks you to add its public key to the GitHub repo (with write access). Then it installs the controllers and applies `clusters/super-hellthalos/`. The manifests in `flux-system/` are already in Git, so no commit should be needed.
 
-Flux reconciles the rest in `dependsOn` order: the Gateway API CRDs (takes them over), Cilium (takes over the Helm release), `cilium-config` (LoadBalancer IP pool and L2 announcement policy), sealed-secrets, local-path-provisioner, cert-manager, CNPG operator, Barman Cloud plugin, kube-prometheus-stack, then `pg-main`. Follow it with:
+Flux reconciles the rest in `dependsOn` order: the Gateway API CRDs (takes them over), Cilium (takes over the Helm release), `cilium-config` (LoadBalancer IP pool and L2 announcement policy), sealed-secrets, local-path-provisioner, cert-manager, `cert-manager-config` (Let's Encrypt issuers), `gateway` (wildcard certificate; a fresh cluster requests a new one from Let's Encrypt), CNPG operator, Barman Cloud plugin, kube-prometheus-stack, then `pg-main`. Follow it with:
 
 ```bash
 flux get kustomizations -A --watch
