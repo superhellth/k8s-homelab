@@ -49,9 +49,10 @@ talosctl -n 192.168.0.192 kubeconfig        # merges into ~/.kube/config
 
 ### 3. Install Cilium by hand
 
-Run from the repo root. Use the chart version from `infrastructure/cilium/ocirepository.yaml` and the values Flux uses:
+Run from the repo root. Apply the Gateway API CRDs first: Cilium only enables Gateway API (and creates `GatewayClass cilium`) if they exist when it is installed. Then install the chart version from `infrastructure/cilium/ocirepository.yaml` with the values Flux uses:
 
 ```bash
+kubectl apply --server-side -k infrastructure/gateway-api-crds
 helm install cilium oci://quay.io/cilium/charts/cilium --version 1.20.4 \
   -n kube-system -f infrastructure/cilium/values.yaml
 kubectl -n kube-system rollout status ds/cilium
@@ -79,7 +80,7 @@ flux bootstrap git \
 
 Flux generates a new SSH deploy key and asks you to add its public key to the GitHub repo (with write access). Then it installs the controllers and applies `clusters/super-hellthalos/`. The manifests in `flux-system/` are already in Git, so no commit should be needed.
 
-Flux reconciles the rest in `dependsOn` order: Cilium (takes over the Helm release), sealed-secrets, local-path-provisioner, cert-manager, CNPG operator, Barman Cloud plugin, kube-prometheus-stack, then `pg-main`. Follow it with:
+Flux reconciles the rest in `dependsOn` order: the Gateway API CRDs (takes them over), Cilium (takes over the Helm release), `cilium-config` (LoadBalancer IP pool and L2 announcement policy), sealed-secrets, local-path-provisioner, cert-manager, CNPG operator, Barman Cloud plugin, kube-prometheus-stack, then `pg-main`. Follow it with:
 
 ```bash
 flux get kustomizations -A --watch
@@ -91,6 +92,7 @@ kubectl get pods -A
 
 - `kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg status`: `KubeProxyReplacement: True`, `Cluster health: 2/2 reachable`
 - `flux get helmreleases -n kube-system cilium`: `Ready`, and its revision is a Flux upgrade of the manually installed release
+- `kubectl get gatewayclass`: `cilium`, `ACCEPTED True`. If it is missing, the CRDs were not there when Cilium started: restart the operator (`kubectl -n kube-system rollout restart deploy/cilium-operator`)
 - `kubectl get cluster -n databases pg-main`: `Cluster in healthy state`
 
 ### Caveats
