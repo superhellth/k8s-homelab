@@ -5,6 +5,7 @@ resources:
   - ocirepository.yaml
   - helmrelease.yaml
   - sealedsecret-grafana-admin.yaml
+  - httproute-grafana.yaml
 configMapGenerator:
   - name: kube-prometheus-stack-values
     namespace: monitoring

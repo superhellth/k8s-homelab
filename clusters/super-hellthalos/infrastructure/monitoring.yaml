@@ -7,6 +7,7 @@ spec:
   dependsOn:
     - name: sealed-secrets
     - name: local-path-provisioner
+    - name: gateway-api-crds
   interval: 1h
   retryInterval: 2m
   timeout: 15m
