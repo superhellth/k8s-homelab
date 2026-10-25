@@ -7,9 +7,9 @@ spec:
   parentRefs:
     - name: main
       namespace: gateway
-      sectionName: https-lan
+      sectionName: https
   hostnames:
-    - grafana.k8s.superhellth.com
+    - grafana.superhellth.com
   rules:
     - backendRefs:
         - name: kube-prometheus-stack-grafana

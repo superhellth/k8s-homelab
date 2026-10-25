@@ -1,0 +1,10 @@
+tunnel: 225496ab-5394-45ec-b3a7-b44ceb3d13e8
+credentials-file: /etc/cloudflared/creds/credentials.json
+metrics: 0.0.0.0:2000
+no-autoupdate: true
+ingress:
+  - hostname: grafana.superhellth.com
+    service: https://cilium-gateway-main.gateway.svc.cluster.local:443
+    originRequest:
+      matchSNItoHost: true
+  - service: http_status:404

@@ -9,5 +9,4 @@ spec:
     kind: ClusterIssuer
     name: letsencrypt-prod
   dnsNames:
-    - "*.k8s.superhellth.com"
     - "*.superhellth.com"
