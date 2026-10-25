@@ -347,7 +347,7 @@ docs/                    STATUS.md (this file), TODO.md
   - The `Cluster` references it under `spec.plugins` with `isWALArchiver: true`, so every WAL segment is archived continuously. Together with base backups this allows point-in-time recovery, not just restoring the last dump.
   - `ScheduledBackup` `pg-main-daily`: `schedule: "0 0 3 * * *"` (six fields, the first is seconds; 03:00 UTC daily), `method: plugin`, `immediate: true` (one backup right after creation), `backupOwnerReference: self`.
   - Verified 2026-10-23: two `Backup` objects in phase `completed` (2026-10-22 18:50 UTC, the immediate one, and 2026-10-23 03:00 UTC), and the `Cluster` conditions show `ContinuousArchiving=True` and `LastBackupSucceeded=True`.
-  - **A restore has not been tested yet** (see "Open items").
+  - Restore tested 2026-10-25 (see "Open items", item 3).
 - History: the first attempt (2026-10-11) deadlocked and was deleted and recreated on 2026-10-20. See "Lessons learned (Kubernetes / tooling)".
 
 ### Decisions
@@ -472,7 +472,7 @@ Created by hand (CLI or dashboard), not reconciled by anything. On a rebuild the
    - **Rebuild ordering:** Talos no longer deploys a CNI, and the Flux controllers need pod networking, so on a fresh cluster Flux cannot install Cilium by itself. For now the manual path is documented in `README.md` ("Rebuild from scratch", 2026-10-24): apply the Gateway API CRDs, then `helm install` Cilium with the same values before `flux bootstrap`, and Flux continues the release (not yet tested). Under consideration: a Talos `KubeInlineManifestConfig` that creates the Cilium objects at bootstrap and lets Flux take ownership. Watch for the private keys the chart renders (`cilium-ca`, `hubble-server-certs`) and `upgrade-k8s` pruning; test on a throwaway `talosctl cluster create` cluster first.
    - A NetworkPolicy for `databases` (only the apps and the CNPG operator may reach Postgres), now that policies are enforced.
    - Optional: Hubble metrics plus a `ServiceMonitor`, Hubble Relay/UI, `bpf.masquerade` and eBPF host routing instead of iptables.
-3. **Test a restore** of `pg-main` from R2, e.g. bootstrap a temporary second `Cluster` with `bootstrap.recovery` from `r2-store`. Backups that were never restored are not proven to work.
+3. **Done 2026-10-25:** tested a restore of `pg-main` from R2.
 4. Kubernetes Secrets use Sealed Secrets (decided 2026-10-20). Still open: whether to commit `talos/secrets.yaml` encrypted as well (it is not a Kubernetes object, so Sealed Secrets doesn't fit; SOPS + age would), and a script for the regenerate commands in "Cluster config" (half-run regenerations happened on 2026-10-23).
 5. Optional: label `talos-ii` as a worker, and think about laptop specifics (lid-close behavior, battery as a built-in UPS, Wi-Fi vs. Ethernet). `talos-ii` was unreachable from 2026-10-09 ~21:42 until 2026-10-10 (`NotReady`, Talos API `no route to host`); the cause was not recorded. It was apparently not schedulable again from about 2026-10-11 until 2026-10-20 17:54 UTC (see the `pg-main` lesson). Now that `talos-ii` holds a Postgres replica (currently the primary), its reliability matters more.
 6. Decide whether `talos-ii` keeps `i915`. If not, delete `schematics/talos-ii.yaml`, remove the installer override from `nodes/talos-ii.yaml`, and run `talosctl upgrade` on `talos-ii` with the default schematic ID.
