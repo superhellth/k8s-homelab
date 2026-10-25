@@ -4,6 +4,9 @@ kubeEtcd:
 grafana:
   admin:
     existingSecret: grafana-admin
+  grafana.ini:
+    server:
+      root_url: https://grafana.k8s.superhellth.com
   persistence:
     enabled: true
     storageClassName: local-path
