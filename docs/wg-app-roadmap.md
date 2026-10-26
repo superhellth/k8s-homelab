@@ -20,16 +20,16 @@ Images: public on GHCR, `linux/amd64` only, tagged `latest` and `sha-<commit>`. 
 
 ## Phase 0: prerequisites
 
-- [ ] Confirm both nodes are amd64: `kubectl get nodes -L kubernetes.io/arch`
-- [ ] Repo layout: new top level `apps/wg-app/`, Flux Kustomization `wg-app` in `clusters/super-hellthalos/apps.yaml`, `dependsOn` `pg-main`, `sealed-secrets`, `gateway`
+- [x] Confirm both nodes are amd64: `kubectl get nodes -L kubernetes.io/arch`
+- [x] Repo layout: new top level `apps/wg-app/`, Flux Kustomization `wg-app` in `clusters/super-hellthalos/apps.yaml`, `dependsOn` `pg-main`, `sealed-secrets`, `gateway`
 
 ## Phase 1: run in the cluster, not exposed
 
-- [ ] Namespace `wg-app`, workloads compatible with PSA `restricted` (non-root, no privilege escalation, drop all capabilities, seccomp `RuntimeDefault`)
-- [ ] SealedSecret with `WG_TOKEN_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (same values as the VPS, otherwise devices lose their token and push subscriptions)
-- [ ] `DATABASE_URL`: the DB password lives in Secret `pg-main-wg-app` in `databases`, Secrets cannot be referenced across namespaces. Decide: seal a copy into `wg-app`, or another approach. Build the URL with `$(VAR)` env interpolation pointing at `pg-main-rw.databases.svc:5432/wg_app`
-- [ ] Deployments for `api` (with migrate initContainer), `worker`, `web`; Services `api` and `web`
-- [ ] Probes and resource requests/limits (RAM is tight)
+- [x] Namespace `wg-app`, workloads compatible with PSA `restricted` (non-root, no privilege escalation, drop all capabilities, seccomp `RuntimeDefault`)
+- [x] SealedSecret with `WG_TOKEN_SECRET`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` (same values as the VPS, otherwise devices lose their token and push subscriptions)
+- [x] `DATABASE_URL`: the DB password lives in Secret `pg-main-wg-app` in `databases`, Secrets cannot be referenced across namespaces. Decide: seal a copy into `wg-app`, or another approach. Build the URL with `$(VAR)` env interpolation pointing at `pg-main-rw.databases.svc:5432/wg_app`
+- [x] Deployments for `api` (with migrate initContainer), `worker`, `web`; Services `api` and `web`
+- [x] Probes and resource requests/limits (RAM is tight)
 - [ ] Test via `kubectl -n wg-app port-forward svc/web 8080:80`
 
 ## Phase 2: expose

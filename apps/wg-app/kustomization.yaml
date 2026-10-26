@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: wg-app
+resources:
+  - namespace.yaml
+  - sealedsecret-wg-app-secrets.yaml
+  - deployment-api.yaml
+  - deployment-web.yaml
+  - deployment-worker.yaml
+  - services.yaml
+configMapGenerator:
+  - name: wg-app-config
+    literals:
+      - VAPID_PUBLIC_KEY=BKkhOna3GxDK3KToGgtH0yZDmwAS2G8-Og2_8763C-WnB2bHX_7OJXVTDDVCfdRw52j-xwVyVwNIZZrJSCtQeqk
+      - VAPID_SUBJECT=mailto:nico.hellthaler@web.de

@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+spec:
+  replicas: 1
+  # Singleton: never let an old and a new pod overlap (double cron runs).
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: worker }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: worker }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: worker
+          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          command: ["node", "dist/worker.js"]
+          envFrom:
+            - secretRef: { name: wg-app-secrets }
+            - configMapRef: { name: wg-app-config }
+          env:
+            - name: DATABASE_URL
+              value: postgres://wg_app:$(DB_PASSWORD)@pg-main-rw.databases.svc:5432/wg_app
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 192Mi }
