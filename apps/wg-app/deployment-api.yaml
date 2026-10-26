@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: api }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: api }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: migrate
+          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          command: ["node", "dist/migrate.js"]
+          env: &dbEnv
+            - name: DB_PASSWORD
+              valueFrom:
+                { secretKeyRef: { name: wg-app-secrets, key: DB_PASSWORD } }
+            - name: DATABASE_URL
+              value: postgres://wg_app:$(DB_PASSWORD)@pg-main-rw.databases.svc:5432/wg_app
+          securityContext: &containerSec
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      containers:
+        - name: api
+          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          ports: [{ name: http, containerPort: 3000 }]
+          envFrom:
+            - secretRef: { name: wg-app-secrets }
+            - configMapRef: { name: wg-app-config }
+          env: *dbEnv
+          securityContext: *containerSec
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
