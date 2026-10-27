@@ -34,7 +34,8 @@ Prune protection translates from `kustomize.toolkit.fluxcd.io/prune: disabled` t
 - [ ] Decide install method: upstream `install.yaml` via kustomize (preferred: matches the rest of `infrastructure/`, raw objects visible) or Helm chart via `HelmRelease`
 - [ ] Flux Kustomization `argocd` → `infrastructure/argocd/` (pinned version, resource requests/limits, RAM is tight)
 - [ ] Separate read-only deploy key for the repo as a SealedSecret
-- [ ] Root `Application` (app-of-apps) applied by Flux, pointing at a directory **outside** `clusters/super-hellthalos/` (Flux applies everything in there), e.g. `argocd/apps/`
+- [ ] Root `Application` (app-of-apps) applied by Flux, pointing at a directory **outside** `clusters/super-hellthalos/` (Flux applies everything in there), e.g. `argocd/apps/`. One hand-written `Application` per file, mirroring `clusters/super-hellthalos/infrastructure/*.yaml`. No ApplicationSet yet: per-app settings differ during the handover (auto-sync off in PR A, prune/delete protection, `ServerSideApply`), which a single template expresses badly
+- [ ] `AppProject`s instead of `default` (which allows everything): `infrastructure` (cluster-scoped resources allowed, destinations limited to the namespaces in use) and `apps` (namespaced resources plus `Namespace` only, destinations limited to app namespaces). Learn: Argo's guardrail/multi-tenancy model. Doing it now avoids moving Applications between projects later
 - [ ] UI via `kubectl port-forward` first; later via Gateway + Cloudflare Access (Access application first, as for Grafana)
 - [ ] Add an ownership table to `docs/STATUS.md`
 
@@ -49,7 +50,8 @@ Low stakes, nothing depends on it. Learn: `Application`, `syncPolicy` (automated
 
 First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secret, no `lookup`, Helm hooks become Argo hooks), `ServerSideApply=true` for the large CRDs, `ignoreDifferences`.
 
-- [ ] Hand over (HelmRelease + OCIRepository → `Application` with an OCI Helm source; values inline or via multi-source `$values`, the hashed ConfigMap workaround goes away)
+- [ ] Decide the directory layout for Helm components. Plan: multi-source `Application` (chart from the OCI registry with `targetRevision`, `ref: values` source for `$values/.../values.yaml`, a plain git path source for extra manifests like Namespace, HTTPRoute, SealedSecret). The extras need their own directory, otherwise Argo also applies `helmrelease.yaml`/`ocirepository.yaml`. No umbrella/wrapper charts: they add `Chart.lock`/`helm dependency build`, force values to be nested under the subchart name, and render extras as Helm templates
+- [ ] Hand over (HelmRelease + OCIRepository → `Application` with an OCI Helm source; the hashed ConfigMap workaround goes away)
 - [ ] Grafana `HTTPRoute` still works
 
 ## Phase 3: `cloudflared`, `cilium-config`
@@ -75,7 +77,15 @@ High stakes: state not in Git. Learn: Argo prune/delete protection, Application 
 - [ ] Application health check configured in `argocd-cm`
 - [ ] Hand over components one by one
 
-## Phase 6: decide the end state
+## Phase 6: ApplicationSet for `apps/`
+
+Workloads under `apps/` are uniform (namespace, plain manifests, auto-sync), so "add a directory = deploy" fits there; infrastructure stays explicit. Learn: ApplicationSet generators and templates.
+
+- [ ] `ApplicationSet` with a git directory generator over `apps/*`, project `apps`
+- [ ] Replace the hand-written `wg-app` `Application`: check how the ApplicationSet controller treats an existing Application with the same name; if unclear, delete the old one without cascading (no finalizer) first
+- [ ] Document in `.claude/CLAUDE.md` how to add a new app
+
+## Phase 7: decide the end state
 
 Two options for `cilium` and Argo CD itself:
 
