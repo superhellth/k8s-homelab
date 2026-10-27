@@ -30,7 +30,7 @@ Images: public on GHCR, `linux/amd64` only, tagged `latest` and `sha-<commit>`. 
 - [x] `DATABASE_URL`: the DB password lives in Secret `pg-main-wg-app` in `databases`, Secrets cannot be referenced across namespaces. Decide: seal a copy into `wg-app`, or another approach. Build the URL with `$(VAR)` env interpolation pointing at `pg-main-rw.databases.svc:5432/wg_app`
 - [x] Deployments for `api` (with migrate initContainer), `worker`, `web`; Services `api` and `web`
 - [x] Probes and resource requests/limits (RAM is tight)
-- [ ] Test via `kubectl -n wg-app port-forward svc/web 8080:80`
+- [x] Test via `kubectl -n wg-app port-forward svc/web 8080:80`
 
 ## Phase 2: expose
 
