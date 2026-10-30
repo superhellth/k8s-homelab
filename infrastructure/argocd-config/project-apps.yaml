@@ -10,6 +10,8 @@ spec:
   destinations:
     - server: https://kubernetes.default.svc
       namespace: wg-app
+    - server: https://kubernetes.default.svc
+      namespace: open-alps
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
