@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-alps
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate: { maxUnavailable: 0 }
+  selector:
+    matchLabels: { app.kubernetes.io/name: open-alps }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: open-alps }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: open-alps
+          image: ghcr.io/superhellth/open-alps:sha-d22e92d2826d0f56f9c956663e828812952264c2
+          ports: [{ name: http, containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: data, mountPath: /srv/data, readOnly: true }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: data
+          image:
+            reference: ghcr.io/superhellth/open-alps-data:2026-09-26@sha256:e351d1a148534ccde41a7f25434b207135c3e274584329ff9dee087617c6bbe9
+            pullPolicy: IfNotPresent
