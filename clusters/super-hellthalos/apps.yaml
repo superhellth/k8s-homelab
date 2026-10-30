@@ -16,5 +16,5 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./apps/wg-app
-  prune: true
+  prune: false
   wait: true
