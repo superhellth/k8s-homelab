@@ -1,0 +1,15 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: apps
+  namespace: argocd
+spec:
+  description: Workloads, namespaced resources plus their own Namespace
+  sourceRepos:
+    - https://github.com/superhellth/k8s-homelab.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: wg-app
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace

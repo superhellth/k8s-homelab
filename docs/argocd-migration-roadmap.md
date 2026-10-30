@@ -30,14 +30,14 @@ Prune protection translates from `kustomize.toolkit.fluxcd.io/prune: disabled` t
 
 ## Phase 0: prerequisites and Argo CD install
 
-- [ ] Merge `refactor/cert-manager-to-helm` first, so the two changes don't get mixed up
-- [ ] Decide install method: upstream `install.yaml` via kustomize (preferred: matches the rest of `infrastructure/`, raw objects visible) or Helm chart via `HelmRelease`
-- [ ] Flux Kustomization `argocd` → `infrastructure/argocd/` (pinned version, resource requests/limits, RAM is tight)
-- [ ] Separate read-only deploy key for the repo as a SealedSecret
-- [ ] Root `Application` (app-of-apps) applied by Flux, pointing at a directory **outside** `clusters/super-hellthalos/` (Flux applies everything in there), e.g. `argocd/apps/`. One hand-written `Application` per file, mirroring `clusters/super-hellthalos/infrastructure/*.yaml`. No ApplicationSet yet: per-app settings differ during the handover (auto-sync off in PR A, prune/delete protection, `ServerSideApply`), which a single template expresses badly
+- [x] Merge `refactor/cert-manager-to-helm` first, so the two changes don't get mixed up
+- [x] Decide install method: Helm chart via `HelmRelease` (first preference was upstream `install.yaml` via kustomize)
+- [x] Flux Kustomization `argocd` → `infrastructure/argocd/` (pinned version, resource requests/limits, RAM is tight)
+- [x] ~~Separate read-only deploy key for the repo as a SealedSecret~~ Not needed: the repo is public, Argo reads it over HTTPS without credentials. Add a key if the repo goes private
+- [ ] Root `Application` (app-of-apps) applied by Flux from `infrastructure/argocd-config/` (Flux Kustomization `argocd-config`, `dependsOn: argocd`), pointing at a directory **outside** `clusters/super-hellthalos/` (Flux applies everything in there): `argocd/apps/`. One hand-written `Application` per file, mirroring `clusters/super-hellthalos/infrastructure/*.yaml`. No ApplicationSet yet: per-app settings differ during the handover (auto-sync off in PR A, prune/delete protection, `ServerSideApply`), which a single template expresses badly
 - [ ] `AppProject`s instead of `default` (which allows everything): `infrastructure` (cluster-scoped resources allowed, destinations limited to the namespaces in use) and `apps` (namespaced resources plus `Namespace` only, destinations limited to app namespaces). Learn: Argo's guardrail/multi-tenancy model. Doing it now avoids moving Applications between projects later
 - [ ] UI via `kubectl port-forward` first; later via Gateway + Cloudflare Access (Access application first, as for Grafana)
-- [ ] Add an ownership table to `docs/STATUS.md`
+- [x] Add an ownership table to `docs/STATUS.md`
 
 ## Phase 1: `wg-app`
 
