@@ -12,3 +12,13 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: wg-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
