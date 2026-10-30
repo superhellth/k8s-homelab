@@ -1,3 +1,4 @@
+---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -11,5 +12,23 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./infrastructure/argocd
+  prune: true
+  wait: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: argocd-config
+  namespace: flux-system
+spec:
+  dependsOn:
+    - name: argocd
+  interval: 1h
+  retryInterval: 2m
+  timeout: 5m
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  path: ./infrastructure/argocd-config
   prune: true
   wait: true
