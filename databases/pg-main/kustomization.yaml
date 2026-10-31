@@ -4,7 +4,9 @@ resources:
   - namespace.yaml
   - cluster.yaml
   - database-wg-app.yaml
+  - database-cubing.yaml
   - sealedsecret-wg-app.yaml
+  - sealedsecret-cubing.yaml
   - sealedsecret-r2-backup.yaml
   - objectstore-r2.yaml
   - scheduledbackup-daily.yaml
