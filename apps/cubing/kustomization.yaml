@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - deployment-frontend.yaml
   - deployment-backend.yaml
+  - deployment-visualcube.yaml
   - sealedsecret-backend.yaml
   - services.yaml
 configMapGenerator:
