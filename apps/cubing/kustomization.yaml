@@ -4,4 +4,13 @@ namespace: cubing
 resources:
   - namespace.yaml
   - deployment-frontend.yaml
-  - service.yaml
+  - deployment-backend.yaml
+  - sealedsecret-backend.yaml
+  - services.yaml
+configMapGenerator:
+  - name: cubing-backend-config
+    literals:
+      - DB_USER=cubing
+      - DB_HOST=pg-main-rw.databases.svc
+      - DB_NAME=cubing
+      - DB_PORT=5432
