@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cubing-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: cubing-backend }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: cubing-backend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      terminationGracePeriodSeconds: 5
+      initContainers:
+        - name: migrate
+          image: ghcr.io/superhellth/cubing-backend:sha-a3d3278515a8ff83408c67bbb6f78078b9e1da9f
+          command:
+            - node_modules/.bin/node-pg-migrate
+            - up
+            - -m
+            - migrations
+            - --advisory-lock-mode
+            - wait
+          envFrom:
+            - configMapRef: { name: cubing-backend-config }
+            - secretRef: { name: cubing-backend-secrets }
+          env:
+            - { name: PGHOST, value: $(DB_HOST) }
+            - { name: PGPORT, value: $(DB_PORT) }
+            - { name: PGDATABASE, value: $(DB_NAME) }
+            - { name: PGUSER, value: $(DB_USER) }
+            - { name: PGPASSWORD, value: $(DB_PASSWORD) }
+          securityContext: &containerSec
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 256Mi }
+      containers:
+        - name: cubing-backend
+          image: ghcr.io/superhellth/cubing-backend:sha-a3d3278515a8ff83408c67bbb6f78078b9e1da9f
+          ports: [{ name: http, containerPort: 3000 }]
+          securityContext: *containerSec
+          envFrom:
+            - configMapRef: { name: cubing-backend-config }
+            - secretRef: { name: cubing-backend-secrets }
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits: { memory: 384Mi }
