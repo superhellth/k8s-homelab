@@ -1,0 +1,15 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: cubing
+spec:
+  parentRefs:
+    - name: main
+      namespace: gateway
+      sectionName: https
+  hostnames:
+    - cubing.superhellth.com
+  rules:
+    - backendRefs:
+        - name: cubing-frontend
+          port: 80
