@@ -14,6 +14,11 @@ spec:
         login: true
         passwordSecret:
           name: pg-main-wg-app
+      - name: cubing
+        ensure: present
+        login: true
+        passwordSecret:
+          name: pg-main-cubing
   plugins:
     - name: barman-cloud.cloudnative-pg.io
       isWALArchiver: true
