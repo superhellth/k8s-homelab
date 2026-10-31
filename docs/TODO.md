@@ -11,6 +11,7 @@
 - consistent db access across apps and config stored findable
 - what checks before mr?
 - Prometheus rule for db getting large
+- understand edge termination (certs)
 
 ## Low
 - deploy S3
