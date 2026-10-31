@@ -12,6 +12,8 @@ spec:
       namespace: wg-app
     - server: https://kubernetes.default.svc
       namespace: open-alps
+    - server: https://kubernetes.default.svc
+      namespace: cubing
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
