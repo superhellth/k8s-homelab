@@ -50,5 +50,5 @@ spec:
   ingress:
     - from:
         - podSelector:
-          matchLabels: { app.kubernetes.io/name: cubing-frontend }
+            matchLabels: { app.kubernetes.io/name: cubing-frontend }
       ports: [{ port: http }]
