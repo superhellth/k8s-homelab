@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cubing-frontend
+  namespace: argocd
+spec:
+  project: apps
+  source:
+    repoURL: https://github.com/superhellth/k8s-homelab.git
+    targetRevision: main
+    path: apps/cubing
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cubing
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

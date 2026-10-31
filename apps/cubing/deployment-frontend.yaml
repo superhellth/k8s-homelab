@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cubing-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: cubing-frontend }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: cubing-frontend }
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: cubing-frontend
+          image: ghcr.io/superhellth/cubing:sha-8bd4f2064c84735c9ed764ab3d0ba7c0c4db0529
+          ports: [{ name: http, containerPort: 8080 }]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
