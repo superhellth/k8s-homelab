@@ -20,5 +20,5 @@ kind: Service
 metadata:
   name: visualcube
 spec:
-  selector: { app.kubernetes.io/name: visualcube }
+  selector: { app.kubernetes.io/name: cubing-visualcube }
   ports: [{ name: http, port: 80, targetPort: http }]
