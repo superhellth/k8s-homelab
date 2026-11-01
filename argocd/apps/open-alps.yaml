@@ -11,7 +11,7 @@ spec:
     path: apps/open-alps
   destination:
     server: https://kubernetes.default.svc
-    namespace: open-alps
+    namespace: apps
   syncPolicy:
     automated:
       prune: true
