@@ -11,6 +11,7 @@
 - what checks before mr?
 - Prometheus rule for db getting large
 - understand edge termination (certs)
+- pretty README
 
 ## Low
 - deploy S3
