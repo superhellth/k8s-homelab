@@ -15,7 +15,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       initContainers:
         - name: migrate
-          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          image: ghcr.io/superhellth/wg-app-api
           command: ["node", "dist/migrate.js"]
           env: &dbEnv
             - name: DB_PASSWORD
@@ -32,7 +32,7 @@ spec:
             limits: { memory: 256Mi }
       containers:
         - name: api
-          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          image: ghcr.io/superhellth/wg-app-api
           ports: [{ name: http, containerPort: 3000 }]
           envFrom:
             - secretRef: { name: wg-app-secrets }

@@ -17,7 +17,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: worker
-          image: ghcr.io/superhellth/wg-app-api:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          image: ghcr.io/superhellth/wg-app-api
           command: ["node", "dist/worker.js"]
           envFrom:
             - secretRef: { name: wg-app-secrets }

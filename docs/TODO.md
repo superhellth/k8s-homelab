@@ -4,7 +4,6 @@
 - migrate wg-app
 
 ## Medium
-- image versioning
 - open-alps data image versioning (move to open-alps repo?)
 - phase out flux
 - consistent db access across apps and config stored findable
