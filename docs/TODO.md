@@ -5,7 +5,6 @@
 
 ## Medium
 - image versioning
-- need so many namespaces?
 - phase out flux
 - consistent db access across apps and config stored findable
 - what checks before mr?

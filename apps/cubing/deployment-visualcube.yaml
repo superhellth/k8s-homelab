@@ -15,7 +15,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: visualcube
-          image: ghcr.io/superhellth/cubing-visualcube:sha-3ad75413e0b38b6edfda2eb3684ee26ed512a5d0
+          image: ghcr.io/superhellth/cubing-visualcube
           ports: [{ name: http, containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false
