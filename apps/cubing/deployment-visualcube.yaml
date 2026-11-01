@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: visualcube
+  name: cubing-visualcube
 spec:
   replicas: 1
   selector:
-    matchLabels: { app.kubernetes.io/name: visualcube }
+    matchLabels: { app.kubernetes.io/name: cubing-visualcube }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: visualcube }
+      labels: { app.kubernetes.io/name: cubing-visualcube }
     spec:
       securityContext:
         runAsNonRoot: true

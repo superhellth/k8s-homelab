@@ -11,9 +11,9 @@ resources:
 images:
   - name: ghcr.io/superhellth/cubing-frontend
     newTag: 1.2.1
-  - name: ghcr.io/superhellth/cubing-frontend
+  - name: ghcr.io/superhellth/cubing-backend
     newTag: 1.2.1
-  - name: ghcr.io/superhellth/cubing-frontend
+  - name: ghcr.io/superhellth/cubing-visualcube
     newTag: 1.2.1
 configMapGenerator:
   - name: cubing-backend-config
