@@ -45,7 +45,7 @@ metadata:
   name: visualcube
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: visualcube }
+    matchLabels: { app.kubernetes.io/name: cubing-visualcube }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
