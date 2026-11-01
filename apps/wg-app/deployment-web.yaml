@@ -1,14 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: web
+  name: wg-app-web
 spec:
   replicas: 1
   selector:
-    matchLabels: { app.kubernetes.io/name: web }
+    matchLabels: { app.kubernetes.io/name: wg-app-web }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: web }
+      labels: { app.kubernetes.io/name: wg-app-web }
     spec:
       securityContext:
         runAsNonRoot: true

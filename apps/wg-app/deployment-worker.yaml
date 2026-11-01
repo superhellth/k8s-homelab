@@ -1,16 +1,16 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: worker
+  name: wg-app-worker
 spec:
   replicas: 1
   # Singleton: never let an old and a new pod overlap (double cron runs).
   strategy: { type: Recreate }
   selector:
-    matchLabels: { app.kubernetes.io/name: worker }
+    matchLabels: { app.kubernetes.io/name: wg-app-worker }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: worker }
+      labels: { app.kubernetes.io/name: wg-app-worker }
     spec:
       securityContext:
         runAsNonRoot: true
