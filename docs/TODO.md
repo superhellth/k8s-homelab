@@ -1,8 +1,7 @@
 # To-Dos
 
 ## High
-- publish wg-app
-- publish cubing
+- migrate wg-app
 
 ## Medium
 - image versioning
