@@ -7,6 +7,11 @@ resources:
   - deployment-web.yaml
   - deployment-worker.yaml
   - services.yaml
+images:
+  - name: ghcr.io/superhellth/wg-app-web
+    newTag: 1.0.0
+  - name: ghcr.io/superhellth/wg-app-web
+    newTag: 1.0.0
 configMapGenerator:
   - name: wg-app-config
     literals:

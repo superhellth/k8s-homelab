@@ -15,7 +15,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: web
-          image: ghcr.io/superhellth/wg-app-web:sha-29dbd9a1b0d974cd8d3dd98b495ed69a14545392
+          image: ghcr.io/superhellth/wg-app-web
           ports: [{ name: http, containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false
