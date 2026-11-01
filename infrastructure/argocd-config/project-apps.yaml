@@ -9,11 +9,7 @@ spec:
     - https://github.com/superhellth/k8s-homelab.git
   destinations:
     - server: https://kubernetes.default.svc
-      namespace: wg-app
-    - server: https://kubernetes.default.svc
-      namespace: open-alps
-    - server: https://kubernetes.default.svc
-      namespace: cubing
+      namespace: apps
   clusterResourceWhitelist:
     - group: ""
       kind: Namespace
