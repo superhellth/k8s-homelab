@@ -17,7 +17,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: open-alps
-          image: ghcr.io/superhellth/open-alps:sha-d22e92d2826d0f56f9c956663e828812952264c2
+          image: ghcr.io/superhellth/open-alps
           ports: [{ name: http, containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false
