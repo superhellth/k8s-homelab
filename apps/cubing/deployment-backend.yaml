@@ -16,7 +16,7 @@ spec:
       terminationGracePeriodSeconds: 5
       initContainers:
         - name: migrate
-          image: ghcr.io/superhellth/cubing-backend:sha-a3d3278515a8ff83408c67bbb6f78078b9e1da9f
+          image: ghcr.io/superhellth/cubing-backend
           command:
             - node_modules/.bin/node-pg-migrate
             - up
@@ -42,7 +42,7 @@ spec:
             limits: { memory: 256Mi }
       containers:
         - name: cubing-backend
-          image: ghcr.io/superhellth/cubing-backend:sha-a3d3278515a8ff83408c67bbb6f78078b9e1da9f
+          image: ghcr.io/superhellth/cubing-backend
           ports: [{ name: http, containerPort: 3000 }]
           securityContext: *containerSec
           envFrom:

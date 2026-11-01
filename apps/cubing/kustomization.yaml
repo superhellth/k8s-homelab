@@ -8,6 +8,13 @@ resources:
   - sealedsecret-backend.yaml
   - services.yaml
   - httproute.yaml
+images:
+  - name: ghcr.io/superhellth/cubing-frontend
+    newTag: 1.2.1
+  - name: ghcr.io/superhellth/cubing-frontend
+    newTag: 1.2.1
+  - name: ghcr.io/superhellth/cubing-frontend
+    newTag: 1.2.1
 configMapGenerator:
   - name: cubing-backend-config
     literals:

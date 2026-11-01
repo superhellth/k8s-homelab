@@ -15,7 +15,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: cubing-frontend
-          image: ghcr.io/superhellth/cubing:sha-3ad75413e0b38b6edfda2eb3684ee26ed512a5d0
+          image: ghcr.io/superhellth/cubing-frontend
           ports: [{ name: http, containerPort: 8080 }]
           securityContext:
             allowPrivilegeEscalation: false
