@@ -4,8 +4,10 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 
 ## Current state (2026-11-09)
 
-- Done: phase 0 (except admin password hardening), phase 1. `cubing` and `open-alps` were deployed directly under Argo.
-- Phase 2 (`kube-prometheus-stack`): handed over (PR #45), `Synced`/`Healthy`, etcd dashboard fixed. Left: cleanup of the Flux leftovers. Next after that: unblock the `argocd` HelmRelease (`docs/STATUS.md` open item 11), then phase 3.
+- Done: phase 0 (except the open items below), phase 1, phase 2. `cubing` and `open-alps` were deployed directly under Argo.
+- Phase 2 (`kube-prometheus-stack`): handed over (PR #45), Flux leftovers removed, `Synced`/`Healthy`.
+- `argocd` HelmRelease (`docs/STATUS.md` open item 11): reconciling again. Probable cause of the failure: the application controller hit its old 512Mi limit after adopting kube-prometheus-stack. `argocd-server` raised to 128Mi / 384Mi (PR #47) after OOM kills.
+- Phase 3: `cloudflared` handed over (PRs #47, #48). Next: `cilium-config`.
 - UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
@@ -19,14 +21,13 @@ Current dependency graph (Flux `dependsOn`, Flux-owned components only):
 
 ```
 pg-main ──► cnpg-barman-plugin ──► cnpg-operator
-   │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway ◄── cloudflared
+   │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway
    └──► sealed-secrets, local-path-provisioner
-kube-prometheus-stack ──► sealed-secrets, local-path-provisioner, gateway-api-crds   (handover in progress)
 cilium-config ──► cilium ──► gateway-api-crds
 argocd-config ──► argocd
 ```
 
-Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`.
+Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`, `kube-prometheus-stack` (implicitly needs `sealed-secrets`, `local-path-provisioner`, `gateway-api-crds`), `cloudflared` (implicitly needs `sealed-secrets`, `gateway`).
 
 ## Layout
 
@@ -80,7 +81,7 @@ CLI: `argocd ... --core` uses the kubeconfig directly (no login, no Argo RBAC) a
 - [x] `cubing`, `open-alps` deployed directly as Argo `Application`s (never under Flux)
 - [ ] Image automation (wg-app roadmap phase 4): use Argo CD Image Updater instead of Flux image automation
 
-## Phase 2: `kube-prometheus-stack` (in progress)
+## Phase 2: `kube-prometheus-stack` (done)
 
 First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secret, no `lookup`, Helm hooks become Argo hooks), `ServerSideApply=true` for the large CRDs, `ignoreDifferences`.
 
@@ -95,15 +96,15 @@ First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secr
 - [x] Etcd dashboard: empty after the switch because the old job label was `kube-etcd` (from the Service's `jobLabel`), not `kube-prometheus-stack-kube-etcd`. Fixed 2026-11-09 with `jobName: kube-etcd` in the `ScrapeConfig` (`db59f4e`)
 - [x] `HTTPRoute` `grafana` permanently `OutOfSync` (self-heal loop): Gateway API defaults written into the manifest (`09b476d`, lesson in `docs/STATUS.md`)
 - [x] PR B (#45, merged 2026-11-09): remove the Flux Kustomization from `monitoring.yaml`, delete `helmrelease.yaml`, `ocirepository.yaml`, `kustomization.yaml`, `kustomizeconfig.yaml`; `automated` (prune, selfHeal) plus `retry` on the `Application`; ownership table
-- [ ] Cleanup: orphaned `HelmRelease` (check it is still suspended before deleting), `OCIRepository`, values ConfigMap(s), `sh.helm.release.v1.kube-prometheus-stack.*` Secrets, Flux labels. State 2026-11-09: all still present (HelmRelease suspended, 2 values ConfigMaps, release Secrets `v1`–`v5`, `kustomize.toolkit.fluxcd.io/*` labels on e.g. the `HTTPRoute`, `helm.toolkit.fluxcd.io/*` on the chart objects)
-- [ ] Verify: Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable, app `Synced`/`Healthy`. 2026-11-09: pods and PVCs unchanged, `Synced`/`Healthy` (after the `HTTPRoute` fix). Open: tick once the cleanup is done
+- [x] Cleanup (2026-11-09): release Secrets `v1`–`v5` deleted first (so even an unintended `helm uninstall` would have found no release), then the suspended `HelmRelease` (no uninstall), the `OCIRepository`, both values ConfigMaps, and the `kustomize.toolkit.fluxcd.io/*` / `helm.toolkit.fluxcd.io/*` labels (one label selector across all kinds; the copies on `Endpoints`/`EndpointSlice` and on the operator-generated StatefulSets cleared on their own). A full-cluster label search finds nothing left
+- [x] Verify (2026-11-09): Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable (`302` to the Access login), app `Synced`/`Healthy`
 - [ ] Later, separate PR: admission webhook certs via cert-manager (`prometheusOperator.admissionWebhooks.certManager.enabled`, removes the hook Jobs)
 
-## Phase 3: `cloudflared`, `cilium-config`
+## Phase 3: `cloudflared`, `cilium-config` (in progress)
 
 Simple leaves. Learn: sync waves once several apps exist.
 
-- [ ] Hand over `cloudflared`
+- [x] Hand over `cloudflared` (PR A #47, PR B #48, 2026-11-09): plain kustomize source, no Helm. Argo's kustomize renders the `configMapGenerator` with the same hash as Flux, so the diff was only the `tracking-id` annotations and no pod restarted. Namespace gets `Prune=false,Delete=false`. Flux labels removed by hand afterwards
 - [ ] Hand over `cilium-config`
 
 ## Phase 4: `pg-main`
