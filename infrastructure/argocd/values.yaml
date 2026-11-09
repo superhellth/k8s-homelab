@@ -12,8 +12,8 @@ configs:
 
 controller:
   resources:
-    requests: { cpu: 50m, memory: 256Mi }
-    limits: { memory: 512Mi }
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 1536Mi }
 repoServer:
   resources:
     requests: { cpu: 20m, memory: 128Mi }
