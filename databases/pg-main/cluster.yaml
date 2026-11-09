@@ -4,6 +4,8 @@ kind: Cluster
 metadata:
   name: pg-main
   namespace: databases
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
 spec:
   instances: 2
   imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie

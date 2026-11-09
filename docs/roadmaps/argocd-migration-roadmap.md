@@ -114,7 +114,8 @@ Simple leaves. Learn: sync waves once several apps exist.
 High stakes: state not in Git. Learn: Argo prune/delete protection, Application finalizers.
 
 - [ ] Fresh base backup to R2 before starting
-- [ ] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application`
+- [x] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application` (PR A, 2026-11-09): set as annotations directly in `cluster.yaml` and `namespace.yaml`, not as a Flux-style patch, because Argo renders only `databases/pg-main/` and never sees the patches in `databases.yaml`. Flux applies the annotation too (harmless), so the protection is live before Argo owns anything. `databases` added to the `infrastructure` project's `destinations`
+- [ ] PR A merged: check `argocd app diff pg-main` (expected: `tracking-id` annotations; watch for CNPG webhook defaults in the `Cluster` spec), then PR B
 - [ ] Hand over, verify the cluster is untouched (`kubectl -n databases get cluster pg-main`, primary unchanged)
 
 ## Phase 5: base layer

@@ -13,6 +13,7 @@ spec:
     - { server: https://kubernetes.default.svc, namespace: monitoring }
     - { server: https://kubernetes.default.svc, namespace: cloudflared }
     - { server: https://kubernetes.default.svc, namespace: kube-system }
+    - { server: https://kubernetes.default.svc, namespace: databases }
   clusterResourceWhitelist:
     - group: "*"
       kind: "*"

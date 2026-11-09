@@ -215,7 +215,8 @@ docs/                    STATUS.md (this file), TODO.md, roadmaps
 |---|---|
 | Flux itself, `cilium`, `gateway-api-crds`, `gateway` | Flux |
 | `sealed-secrets`, `cert-manager`, `cert-manager-config`, `local-path-provisioner` | Flux |
-| `cnpg-operator`, `cnpg-barman-plugin`, `pg-main` | Flux |
+| `cnpg-operator`, `cnpg-barman-plugin` | Flux |
+| `pg-main` | Flux; handover to Argo CD in progress (PR A: Flux `prune: false`, `Application` `pg-main` with manual sync, `Prune=false,Delete=false` on `Cluster` and `Namespace`) |
 | `kube-prometheus-stack` | Argo CD since 2026-11-09 (PR #45, auto-sync with prune and selfHeal). Flux leftovers removed 2026-11-09 |
 | `cloudflared` | Argo CD since 2026-11-09 (PR A #47, PR B #48, auto-sync with prune and selfHeal) |
 | `cilium-config` | Argo CD since 2026-11-09 (PR A #49, PR B #50, auto-sync with prune and selfHeal). Flux labels still to remove (open item 12) |
