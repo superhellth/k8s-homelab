@@ -4,7 +4,7 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 
 ## Current state (2026-11-09)
 
-- Done: phase 0 (except the open items below), phases 1 to 4. Next: phase 5 (base layer), or phase 6 in between. `cubing` and `open-alps` were deployed directly under Argo.
+- Done: phase 0 (except the open items below), phases 1 to 4. In progress: phase 5 (waves and Application health check live since PR #53; combined PR A for seven base components open). `cubing` and `open-alps` were deployed directly under Argo.
 - Phase 2 (`kube-prometheus-stack`): handed over (PR #45), Flux leftovers removed, `Synced`/`Healthy`.
 - `argocd` HelmRelease (`docs/STATUS.md` open item 11): reconciling again. Probable cause of the failure: the application controller hit its old 512Mi limit after adopting kube-prometheus-stack. `argocd-server` raised to 128Mi / 384Mi (PR #47) after OOM kills.
 - Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified). Flux labels gone from both.
@@ -125,9 +125,26 @@ High stakes: state not in Git. Learn: Argo prune/delete protection, Application 
 
 `gateway`, `cert-manager-config`, `cert-manager`, `cnpg-barman-plugin`, `cnpg-operator`, `local-path-provisioner`, `gateway-api-crds`, `sealed-secrets` (roughly in this order). Learn: translating the `dependsOn` graph into sync waves; a custom Lua health check for `argoproj.io/Application` so that waves actually wait for child apps to be healthy.
 
-- [ ] Wave layout derived from the dependency graph
-- [ ] Application health check configured in `argocd-cm`
-- [ ] Hand over components one by one
+- [x] Wave layout derived from the dependency graph (PR #53, 2026-11-09). Rule: **infrastructure gets negative waves, apps stay in the default wave 0**, so a new app without the annotation always lands after the infrastructure. The annotation goes on the child `Application`, not on the resources it deploys:
+
+  | Wave | Applications |
+  |---|---|
+  | -4 | `gateway-api-crds`, `sealed-secrets`, `local-path-provisioner`, `cert-manager`, `cnpg-operator` |
+  | -3 | `cert-manager-config`, `cnpg-barman-plugin`, `cilium-config`, `kube-prometheus-stack` |
+  | -2 | `gateway`, `pg-main` |
+  | -1 | `cloudflared` |
+  | 0 | `wg-app`, `cubing`, `open-alps` (default) |
+
+  `cilium` has no wave: on a rebuild it is installed by hand before Argo (no CNI, no Argo). Why waves matter at all: on the live cluster every wave is healthy at once. On a rebuild, each child's `retry` (limit 5, ~12 minutes in total) is all it gets, because auto-sync makes only one attempt per commit; a child whose dependency takes longer stays failed until the next commit
+- [x] Application health check configured in `argocd-cm` (PR #53): `resource.customizations.health.argoproj.io_Application` under `configs.cm` in `infrastructure/argocd/values.yaml`, copies `status.health.status` of the child (no status yet: `Progressing`). Side effects: `root` shows the worst health of its children, and a stuck child holds back the root's sync at its wave (later-wave `Application` changes wait; manifest changes inside the child apps do not). Verify with `argocd app get root -o tree`, not with `kubectl`: since 3.0 resource health is not stored in the CR (see the lesson in `docs/STATUS.md`)
+- [ ] Combined PR A for `gateway`, `cnpg-barman-plugin`, `local-path-provisioner`, `cert-manager-config`, `cnpg-operator`, `sealed-secrets`, `gateway-api-crds`: child `Application`s without auto-sync, Flux `prune: false`, project destinations `gateway`, `cert-manager`, `cnpg-system`, `local-path-storage`. Bundled because PR A changes nothing in the cluster; PR Bs stay one per component. `cert-manager` is not in it (Helm chart, its own PR like kube-prometheus-stack). After the merge, `argocd app get root -o tree` must show every child `Healthy`; a `Missing`/`Degraded` new child would stall the root's waves
+  - CRD prune protection moved into the component's own `kustomization.yaml` (`argocd.argoproj.io/sync-options: Prune=false,Delete=false` on every CRD) for `sealed-secrets`, `cnpg-operator`, `gateway-api-crds`: the Flux patch in `clusters/...` is invisible to Argo. Flux applies the new annotation too, so the protection is live before Argo owns anything
+  - `cnpg-barman-plugin`: its CRD (`objectstores.barmancloud.cnpg.io`) was unprotected even under Flux; `pg-main`'s `ObjectStore` `r2-store` depends on it (deleting the CRD would stop WAL archiving). Same patch added
+  - `cnpg-operator` (largest CRD ~680 KB) and `gateway-api-crds` (~430 KB) exceed the 256 KiB `last-applied-configuration` limit of client-side apply: `ServerSideApply=true` sync option plus `ServerSideDiff=true` compare option, already in PR A so that the pre-PR-B diff is computed the way the sync will apply
+  - Namespaces `gateway`, `local-path-storage`, `cnpg-system` get `Prune=false,Delete=false` (`cnpg-system` comes from the upstream manifest, so through a patch)
+  - `gateway`: the API server writes `group: ""` and `kind: Secret` into `certificateRefs` (atomic list, same trap as `HTTPRoute`), now in the manifest. The `wildcard-tls` Secret has no owner reference and no tracking ID, so Argo neither shows nor prunes it
+  - Checked, no action: CNPG injects `caBundle` into its webhook configurations at runtime, but the field is not in the manifest, so Argo ignores it (confirm in the diff). The barman plugin's `Secret` is static (sidecar image name)
+- [ ] PR B per component, leaves first: `gateway`, `cnpg-barman-plugin`, `local-path-provisioner`, `cert-manager-config`, `cnpg-operator`, then `cert-manager` (own PR A), `sealed-secrets`. `gateway-api-crds` is blocked by Flux `cilium`'s `dependsOn`: drop that `dependsOn` or move it with Cilium in phase 7 (undecided). Before each PR B: `argocd app diff <app>` shows only `tracking-id` annotations
 
 ## Phase 6: ApplicationSet for `apps/`
 
