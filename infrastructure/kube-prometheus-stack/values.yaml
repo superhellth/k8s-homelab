@@ -1,6 +1,10 @@
 kubeEtcd:
-  endpoints:
-    - 192.168.0.192
+  # Keep enabled: this flag also gates the etcd PrometheusRules and the Grafana dashboard.
+  # Scraping is done by manifests/scrapeconfig-etcd.yaml (static target, no Service/Endpoints).
+  service:
+    enabled: false
+  serviceMonitor:
+    enabled: false
 grafana:
   admin:
     existingSecret: grafana-admin
