@@ -6,6 +6,10 @@ dex:
 notifications:
   enabled: false
 
+config:
+  params:
+    server.insecure: true
+
 controller:
   resources:
     requests: { cpu: 50m, memory: 256Mi }
