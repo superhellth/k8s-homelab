@@ -12,3 +12,10 @@ spec:
     repoURL: https://github.com/superhellth/k8s-homelab.git
     targetRevision: main
     path: databases/pg-main
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5
+      backoff: { duration: 30s, factor: 2, maxDuration: 5m }

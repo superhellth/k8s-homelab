@@ -7,7 +7,8 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 - Done: phase 0 (except the open items below), phase 1, phase 2. `cubing` and `open-alps` were deployed directly under Argo.
 - Phase 2 (`kube-prometheus-stack`): handed over (PR #45), Flux leftovers removed, `Synced`/`Healthy`.
 - `argocd` HelmRelease (`docs/STATUS.md` open item 11): reconciling again. Probable cause of the failure: the application controller hit its old 512Mi limit after adopting kube-prometheus-stack. `argocd-server` raised to 128Mi / 384Mi (PR #47) after OOM kills.
-- Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified); Flux labels still to remove. Next: phase 4 (`pg-main`).
+- Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified); Flux labels still to remove.
+- Phase 4: `pg-main` PR A (#51) merged, diff clean (only `tracking-id`); PR B removes the Flux Kustomization and enables auto-sync.
 - UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
@@ -20,14 +21,13 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 Current dependency graph (Flux `dependsOn`, Flux-owned components only):
 
 ```
-pg-main ──► cnpg-barman-plugin ──► cnpg-operator
-   │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway
-   └──► sealed-secrets, local-path-provisioner
+cnpg-barman-plugin ──► cnpg-operator
+        └────────────► cert-manager ◄── cert-manager-config ◄── gateway
 cilium ──► gateway-api-crds
 argocd-config ──► argocd
 ```
 
-Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`, `kube-prometheus-stack` (implicitly needs `sealed-secrets`, `local-path-provisioner`, `gateway-api-crds`), `cloudflared` (implicitly needs `sealed-secrets`, `gateway`), `cilium-config` (implicitly needs `cilium`, whose operator creates the CRDs).
+Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`, `kube-prometheus-stack` (implicitly needs `sealed-secrets`, `local-path-provisioner`, `gateway-api-crds`), `cloudflared` (implicitly needs `sealed-secrets`, `gateway`), `cilium-config` (implicitly needs `cilium`, whose operator creates the CRDs), `pg-main` (implicitly needs `cnpg-operator`, `cnpg-barman-plugin`, `sealed-secrets`, `local-path-provisioner`).
 
 ## Layout
 
@@ -115,7 +115,9 @@ High stakes: state not in Git. Learn: Argo prune/delete protection, Application 
 
 - [ ] Fresh base backup to R2 before starting
 - [x] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application` (PR A, 2026-11-09): set as annotations directly in `cluster.yaml` and `namespace.yaml`, not as a Flux-style patch, because Argo renders only `databases/pg-main/` and never sees the patches in `databases.yaml`. Flux applies the annotation too (harmless), so the protection is live before Argo owns anything. `databases` added to the `infrastructure` project's `destinations`
-- [ ] PR A merged: check `argocd app diff pg-main` (expected: `tracking-id` annotations; watch for CNPG webhook defaults in the `Cluster` spec), then PR B
+- [x] PR A (#51) merged: `argocd app diff pg-main` showed only `tracking-id` annotations, plus `sync-options` on `Cluster`/`Namespace` (live, but owned by `kustomize-controller`). No CNPG webhook defaults
+- [ ] PR B: delete `clusters/super-hellthalos/databases.yaml` (its only Kustomization was `pg-main`), `automated` (prune, selfHeal) plus `retry` on the `Application`
+- [ ] Cleanup after PR B: Flux labels on all objects, `kustomize.toolkit.fluxcd.io/prune` annotation on `Cluster` and `Namespace`
 - [ ] Hand over, verify the cluster is untouched (`kubectl -n databases get cluster pg-main`, primary unchanged)
 
 ## Phase 5: base layer
