@@ -12,7 +12,7 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./infrastructure/cnpg-operator
-  prune: true
+  prune: false
   wait: true
   patches:
     - target:
@@ -41,5 +41,5 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./infrastructure/cnpg-barman-plugin
-  prune: true
+  prune: false
   wait: true

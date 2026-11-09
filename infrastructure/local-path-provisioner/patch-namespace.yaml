@@ -4,3 +4,5 @@ metadata:
   name: local-path-storage
   labels:
     pod-security.kubernetes.io/enforce: privileged
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

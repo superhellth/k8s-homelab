@@ -40,7 +40,7 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./infrastructure/gateway-api-crds
-  prune: true
+  prune: false
   wait: true
   patches:
     - target:
