@@ -7,9 +7,11 @@ spec:
   description: Cluster components, may manage cluster-scoped resources
   sourceRepos:
     - https://github.com/superhellth/k8s-homelab.git
+    - oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack
   destinations:
-    - server: https://kubernetes.default.svc
-      namespace: argocd
+    - { server: https://kubernetes.default.svc, namespace: argocd }
+    - { server: https://kubernetes.default.svc, namespace: monitoring }
+    - { server: https://kubernetes.default.svc, namespace: kube-system }
   clusterResourceWhitelist:
     - group: "*"
       kind: "*"
