@@ -1,32 +1,61 @@
 # Argo CD migration roadmap
 
-High-level plan for moving GitOps from Flux to Argo CD gradually, one component at a time. Primary goal is learning Argo CD; a full switch is optional. Written 2026-10-27.
+High-level plan for moving GitOps from Flux to Argo CD gradually, one component at a time. Primary goal is learning Argo CD. Written 2026-10-27; **since 2026-11-09 the goal is a full switch** (Flux uninstalled, see phase 7). Last updated 2026-11-09.
+
+## Current state (2026-11-09)
+
+- Done: phase 0 (except admin password hardening), phase 1. `cubing` and `open-alps` were deployed directly under Argo.
+- In progress: phase 2 (`kube-prometheus-stack`). PR A merged (#42), the `Application` exists with manual sync, the diff has been checked. etcd scraping moved to a `ScrapeConfig` (2026-11-09). Next: manual sync, remove the old etcd Service/ServiceMonitor, then PR B.
+- UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
 
 - **Migrate from the leaves inward.** Flux `dependsOn` can only reference Flux Kustomizations: moving something that a remaining Flux Kustomization depends on breaks that Kustomization ("dependency not found"). Only move components no remaining Flux Kustomization depends on.
 - **Argo apps may implicitly depend on Flux-managed things.** No declared dependency needed: on the live cluster they already exist, on a rebuild Argo retries the sync with backoff until CRDs/Secrets show up.
-- **One owner per object.** Never let both tools manage the same resource. Keep the ownership table below current in every PR.
+- **One owner per object.** Never let both tools manage the same resource. Keep the ownership table in `docs/STATUS.md` current in every PR.
 - **Leave Flux in charge of Argo CD itself** until the final phase.
 
-Current dependency graph (Flux `dependsOn`):
+Current dependency graph (Flux `dependsOn`, Flux-owned components only):
 
 ```
-wg-app ──► pg-main ──► cnpg-barman-plugin ──► cnpg-operator
-   │          │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway ◄── cloudflared
-   └──────────┴──► sealed-secrets, local-path-provisioner, gateway-api-crds
-kube-prometheus-stack ──► sealed-secrets, local-path-provisioner, gateway-api-crds
+pg-main ──► cnpg-barman-plugin ──► cnpg-operator
+   │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway ◄── cloudflared
+   └──► sealed-secrets, local-path-provisioner
+kube-prometheus-stack ──► sealed-secrets, local-path-provisioner, gateway-api-crds   (handover in progress)
 cilium-config ──► cilium ──► gateway-api-crds
+argocd-config ──► argocd
 ```
+
+Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`.
+
+## Layout
+
+- `infrastructure/argocd-config/` (applied by Flux): `AppProject`s `apps` and `infrastructure`, root `Application`.
+- The root syncs `argocd/` with `directory.recurse: true` (since #42): `argocd/apps/` holds workload `Application`s, `argocd/infrastructure/` holds infrastructure `Application`s. The root has `prune: true`: a wrong path or empty render would delete the child `Application`s (their workloads survive, no finalizer). Check `argocd app diff root` after every change to the root.
+- Helm components: the plain manifests (Namespace, SealedSecret, HTTPRoute, ...) live in a `manifests/` subdirectory next to `values.yaml`. During the handover, Flux's `kustomization.yaml` references `manifests/...`; Argo applies the directory as a plain source.
 
 ## Handover recipe (per component)
 
 Deleting a Flux Kustomization with `prune: true` deletes everything it manages, and deleting a `HelmRelease` runs `helm uninstall`. So every handover takes two PRs:
 
 1. **PR A:** set `prune: false` on the Flux Kustomization (for HelmReleases additionally `spec.suspend: true`; verify against the Flux docs that a suspended HelmRelease is not uninstalled on deletion). Add the Argo `Application` with auto-sync **off**. Check `argocd app diff`: should be (nearly) empty.
-2. **PR B:** delete the Flux Kustomization (resources are orphaned, keep running). Enable auto-sync on the `Application`; Argo adopts the resources. Clean up leftovers (Flux labels, `sh.helm.release.v1.*` secrets for Helm charts).
+2. **PR B:** delete the Flux Kustomization (resources are orphaned, keep running). Enable auto-sync on the `Application`; Argo adopts the resources. Clean up leftovers (Flux labels, `sh.helm.release.v1.*` secrets for Helm charts, orphaned `HelmRelease`/`OCIRepository`/values ConfigMaps).
 
 Prune protection translates from `kustomize.toolkit.fluxcd.io/prune: disabled` to `argocd.argoproj.io/sync-options: Prune=false,Delete=false`. Also decide per `Application` whether it gets the `resources-finalizer.argocd.argoproj.io` finalizer (deleting the Application then cascades to its resources).
+
+Checks before opening a PR:
+
+- `kubectl kustomize <dir>` for every directory Flux builds (files not listed under `resources:` are silently ignored).
+- `kubectl apply --dry-run=server --validate=strict -f <Application or AppProject>`: unknown fields (`valuesFiles`, `spec.directory`) are otherwise dropped silently by a normal apply.
+- New namespaces in the project's `destinations`, new chart sources in `sourceRepos` (must match the `repoURL` exactly, including `oci://`).
+
+Expected diff noise when Argo adopts a Flux Helm release:
+
+- `argocd.argoproj.io/tracking-id` added to every resource (annotation-based tracking): this is the adoption itself.
+- `chart`/`app.kubernetes.io/version` labels lose a `_<digest>` suffix: helm-controller appends the OCI digest as semver build metadata, Argo renders the plain version. Metadata only, but where the labels are in a pod template, those pods restart once.
+- Objects Argo excludes by default (`Endpoints`, `EndpointSlice`, `Lease`, ... in `resource.exclusions`) show up as `ExcludedResourceWarning` and are never managed. If a chart renders one, decide how to handle it before PR B.
+
+CLI: `argocd ... --core` uses the kubeconfig directly (no login, no Argo RBAC) and needs `argocd` as the kube namespace (separate kube context `argocd`, use `--kube-context argocd`). Since `server.insecure: true`, a login through a port-forward needs `--plaintext`.
 
 ## Phase 0: prerequisites and Argo CD install
 
@@ -34,25 +63,38 @@ Prune protection translates from `kustomize.toolkit.fluxcd.io/prune: disabled` t
 - [x] Decide install method: Helm chart via `HelmRelease` (first preference was upstream `install.yaml` via kustomize)
 - [x] Flux Kustomization `argocd` → `infrastructure/argocd/` (pinned version, resource requests/limits, RAM is tight)
 - [x] ~~Separate read-only deploy key for the repo as a SealedSecret~~ Not needed: the repo is public, Argo reads it over HTTPS without credentials. Add a key if the repo goes private
-- [ ] Root `Application` (app-of-apps) applied by Flux from `infrastructure/argocd-config/` (Flux Kustomization `argocd-config`, `dependsOn: argocd`), pointing at a directory **outside** `clusters/super-hellthalos/` (Flux applies everything in there): `argocd/apps/`. One hand-written `Application` per file, mirroring `clusters/super-hellthalos/infrastructure/*.yaml`. No ApplicationSet yet: per-app settings differ during the handover (auto-sync off in PR A, prune/delete protection, `ServerSideApply`), which a single template expresses badly
-- [ ] `AppProject`s instead of `default` (which allows everything): `infrastructure` (cluster-scoped resources allowed, destinations limited to the namespaces in use) and `apps` (namespaced resources plus `Namespace` only, destinations limited to app namespaces). Learn: Argo's guardrail/multi-tenancy model. Doing it now avoids moving Applications between projects later
-- [ ] UI via `kubectl port-forward` first; later via Gateway + Cloudflare Access (Access application first, as for Grafana)
+- [x] Root `Application` (app-of-apps) applied by Flux from `infrastructure/argocd-config/` (Flux Kustomization `argocd-config`, `dependsOn: argocd`), pointing at `argocd/` (outside `clusters/super-hellthalos/`, which Flux applies entirely). One hand-written `Application` per file. No ApplicationSet yet
+- [x] `AppProject`s instead of `default`: `infrastructure` (cluster-scoped resources allowed; destinations `argocd`, `monitoring`, `kube-system`) and `apps` (namespaced resources plus `Namespace` only, app namespaces)
 - [x] Add an ownership table to `docs/STATUS.md`
+- [x] UI route (PRs #40, #41): `server.insecure: true` (the Gateway terminates TLS, plain HTTP to the backend), `HTTPRoute` `argocd-server` in `infrastructure/argocd/`, cloudflared ingress rule, DNS record
+- [x] Cloudflare Access application for `argocd.superhellth.com` (2026-11-09, verified: `302` to the Access login for UI and `/api/version`)
+- [ ] Record the Access application and the `argocd` DNS record under "State outside Git" in `docs/STATUS.md`
+- [ ] Change the `admin` password, delete `argocd-initial-admin-secret`
+- [ ] Later: SSO through Cloudflare Access as OIDC provider (`oidc.config`), then disable `admin`
+- [ ] Close the LAN bypass of the Gateway (`docs/STATUS.md` open item 9.5): more urgent now that Argo is behind it
 
-## Phase 1: `wg-app`
+## Phase 1: `wg-app` (done)
 
-Low stakes, nothing depends on it. Learn: `Application`, `syncPolicy` (automated, prune, selfHeal), the handover recipe.
-
-- [ ] Hand over `wg-app`
+- [x] Hand over `wg-app`
+- [x] `cubing`, `open-alps` deployed directly as Argo `Application`s (never under Flux)
 - [ ] Image automation (wg-app roadmap phase 4): use Argo CD Image Updater instead of Flux image automation
 
-## Phase 2: `kube-prometheus-stack`
+## Phase 2: `kube-prometheus-stack` (in progress)
 
 First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secret, no `lookup`, Helm hooks become Argo hooks), `ServerSideApply=true` for the large CRDs, `ignoreDifferences`.
 
-- [ ] Decide the directory layout for Helm components. Plan: multi-source `Application` (chart from the OCI registry with `targetRevision`, `ref: values` source for `$values/.../values.yaml`, a plain git path source for extra manifests like Namespace, HTTPRoute, SealedSecret). The extras need their own directory, otherwise Argo also applies `helmrelease.yaml`/`ocirepository.yaml`. No umbrella/wrapper charts: they add `Chart.lock`/`helm dependency build`, force values to be nested under the subchart name, and render extras as Helm templates
-- [ ] Hand over (HelmRelease + OCIRepository → `Application` with an OCI Helm source; the hashed ConfigMap workaround goes away)
-- [ ] Grafana `HTTPRoute` still works
+- [x] Directory layout: multi-source `Application` `argocd/infrastructure/kube-prometheus-stack.yaml`. Chart via Argo's native OCI source (`repoURL: oci://ghcr.io/prometheus-community/charts/kube-prometheus-stack`, `path: .`), no repository Secret needed for a public registry; `releaseName: kube-prometheus-stack` (resource names derive from it). Second source: this repo with `ref: values` (for `$values/.../values.yaml`) and `path: .../manifests`
+- [x] `ignoreDifferences` for the webhooks' `caBundle` (patched in by the admission hook Job), `ServerSideApply=true`, `RespectIgnoreDifferences=true`
+- [x] Namespace `monitoring` with `Prune=false,Delete=false`
+- [x] PR A (#42): HelmRelease suspended, Flux Kustomization `prune: false`, `Application` with manual sync
+- [x] Diff checked (2026-11-09): only tracking annotations and the chart version labels; `prometheus-operator` restarts once (labels in its pod template); CRDs unchanged
+- [x] etcd `Endpoints` object (`kube-prometheus-stack-kube-etcd` in `kube-system`, rendered from `kubeEtcd.endpoints`): Argo excludes `Endpoints` by default, so after PR B nobody would manage it and a rebuild would not create it. Decided 2026-11-09: no `resource.exclusions` change in Argo; etcd is scraped through a `ScrapeConfig` with a static target instead (`manifests/scrapeconfig-etcd.yaml`, Argo only, not in Flux's `kustomization.yaml`). `kubeEtcd.service` and `kubeEtcd.serviceMonitor` disabled, `kubeEtcd.enabled` stays `true` (gates the etcd rules and dashboard)
+- [ ] Manual sync before PR B (**required** since the `ScrapeConfig` change: the HelmRelease is suspended, so a values change only goes live through Argo). Check `argocd app diff` first (expected: tracking annotations, chart version labels, new `ScrapeConfig`). Watch the adoption and the hooks (PreSync createSecret, PostSync patchWebhook)
+- [ ] After the sync: etcd target up in Prometheus (`count by (job) (up{job=~".*etcd.*"})`, job `kube-prometheus-stack-kube-etcd`), then delete the old `ServiceMonitor` `kube-prometheus-stack-kube-etcd` in `monitoring` and the `Service` of the same name in `kube-system` (its `Endpoints` go with it). Argo never tracked them, so it will not prune them. Check the etcd dashboard still shows data
+- [ ] PR B: remove the Flux Kustomization from `monitoring.yaml`, delete `helmrelease.yaml`, `ocirepository.yaml`, `kustomization.yaml`, `kustomizeconfig.yaml`; `automated` (prune, selfHeal) plus `retry` on the `Application`; ownership table
+- [ ] Cleanup: orphaned `HelmRelease` (check it is still suspended before deleting), `OCIRepository`, values ConfigMap(s), `sh.helm.release.v1.kube-prometheus-stack.*` Secrets, Flux labels
+- [ ] Verify: Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable, app `Synced`/`Healthy`
+- [ ] Later, separate PR: admission webhook certs via cert-manager (`prometheusOperator.admissionWebhooks.certManager.enabled`, removes the hook Jobs)
 
 ## Phase 3: `cloudflared`, `cilium-config`
 
@@ -79,22 +121,20 @@ High stakes: state not in Git. Learn: Argo prune/delete protection, Application 
 
 ## Phase 6: ApplicationSet for `apps/`
 
-Workloads under `apps/` are uniform (namespace, plain manifests, auto-sync), so "add a directory = deploy" fits there; infrastructure stays explicit. Learn: ApplicationSet generators and templates.
+Workloads under `apps/` are uniform (namespace, plain manifests, auto-sync), so "add a directory = deploy" fits there; infrastructure stays explicit. Learn: ApplicationSet generators and templates. Independent of the other phases: with three identical app `Application`s it can be done any time.
 
 - [ ] `ApplicationSet` with a git directory generator over `apps/*`, project `apps`
-- [ ] Replace the hand-written `wg-app` `Application`: check how the ApplicationSet controller treats an existing Application with the same name; if unclear, delete the old one without cascading (no finalizer) first
+- [ ] Replace the hand-written `Application`s (`wg-app`, `cubing`, `open-alps`): check how the ApplicationSet controller treats an existing Application with the same name; if unclear, delete the old ones without cascading (no finalizer) first
 - [ ] Document in `.claude/CLAUDE.md` how to add a new app
 
-## Phase 7: decide the end state
+## Phase 7: all Argo (decided 2026-11-09)
 
-Two options for `cilium` and Argo CD itself:
+Argo manages everything including itself and Cilium; Flux is uninstalled. (The alternative was Flux as a thin bootstrap layer for Cilium, sealed-secrets and Argo CD.)
 
-- **Flux as thin bootstrap layer:** Flux keeps Cilium, sealed-secrets, Argo CD; Argo handles everything else. Legitimate pattern, less risk.
-- **All Argo:** Argo manages itself, Flux uninstalled (`flux uninstall`, after making sure nothing is still owned by Flux). Cilium under Argo needs a fix for the Hubble certs (`genCA` re-renders on every sync → permanent `OutOfSync`): `hubble.tls.auto.method: cronJob` or `certmanager`.
-
-Either way:
-
-- [ ] Rebuild procedure in `docs/STATUS.md` updated and ideally tested
+- [ ] Cilium: fix the Hubble certs first (`genCA` re-renders on every sync → permanent `OutOfSync`): `hubble.tls.auto.method: cronJob` or `certmanager`. Then hand over with `Prune=false,Delete=false` on everything (deleting the CNI cuts every pod off the network)
+- [ ] Argo CD manages itself: `Application`s for the Argo CD chart and for `argocd-config` (projects, root). Document a manual recovery path (`helm upgrade` with the same values) for when Argo breaks itself
+- [ ] Remove Flux: check nothing still carries `kustomize.toolkit.fluxcd.io/name` or `helm.toolkit.fluxcd.io/name` labels, `flux uninstall` (removes finalizers before deleting the CRDs, workloads keep running), delete `clusters/super-hellthalos/`, check the NetworkPolicies Flux shipped in `flux-system`
+- [ ] Rebuild procedure in `docs/STATUS.md`/`docs/SETUP.md` updated and ideally tested on a throwaway `talosctl cluster create` cluster: Talos → sealed-secrets key → Gateway API CRDs + Cilium (`helm install` or Talos inline manifest) → `helm install` Argo CD → apply the root → Argo adopts everything
 - [ ] `.claude/CLAUDE.md` updated (commands, prune protection conventions, repo layout)
 
 ## Costs to keep in mind
@@ -102,3 +142,4 @@ Either way:
 - Two tools and two mental models during the transition
 - ~0.5–1 GB extra RAM for Argo CD (repo-server spikes when rendering large charts)
 - Rebuild story is more complex while both are in use: document it
+- Argo has no hard ordering between apps like Flux's `dependsOn`: waves plus the health check come close, but a rebuild converges through retries (noisy first sync)

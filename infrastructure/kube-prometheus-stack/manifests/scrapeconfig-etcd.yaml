@@ -1,0 +1,11 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: ScrapeConfig
+metadata:
+  name: etcd
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  jobName: kube-prometheus-stack-kube-etcd
+  staticConfigs:
+    - targets: ["192.168.0.192:2381"]
