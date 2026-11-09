@@ -4,3 +4,5 @@ metadata:
   name: cloudflared
   labels:
     pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false

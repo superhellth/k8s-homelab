@@ -1,0 +1,14 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cloudflared
+  namespace: argocd
+spec:
+  project: infrastructure
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cloudflared
+  source:
+    repoURL: https://github.com/superhellth/k8s-homelab.git
+    targetRevision: main
+    path: infrastructure/cloudflared

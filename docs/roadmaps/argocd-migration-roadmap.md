@@ -5,7 +5,7 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 ## Current state (2026-11-09)
 
 - Done: phase 0 (except admin password hardening), phase 1. `cubing` and `open-alps` were deployed directly under Argo.
-- In progress: phase 2 (`kube-prometheus-stack`). PR A merged (#42), the `Application` exists with manual sync, the diff has been checked. etcd scraping moved to a `ScrapeConfig` (2026-11-09). Next: manual sync, remove the old etcd Service/ServiceMonitor, then PR B.
+- Phase 2 (`kube-prometheus-stack`): handed over (PR #45), `Synced`/`Healthy`, etcd dashboard fixed. Left: cleanup of the Flux leftovers. Next after that: unblock the `argocd` HelmRelease (`docs/STATUS.md` open item 11), then phase 3.
 - UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
@@ -53,6 +53,7 @@ Expected diff noise when Argo adopts a Flux Helm release:
 
 - `argocd.argoproj.io/tracking-id` added to every resource (annotation-based tracking): this is the adoption itself.
 - `chart`/`app.kubernetes.io/version` labels lose a `_<digest>` suffix: helm-controller appends the OCI digest as semver build metadata, Argo renders the plain version. Metadata only, but where the labels are in a pod template, those pods restart once.
+- API-server defaults inside atomic lists (e.g. Gateway API `HTTPRoute`: `group`, `kind`, `weight`, `matches`) stay `OutOfSync` even with server-side diff: write them into the manifest before PR B.
 - Objects Argo excludes by default (`Endpoints`, `EndpointSlice`, `Lease`, ... in `resource.exclusions`) show up as `ExcludedResourceWarning` and are never managed. If a chart renders one, decide how to handle it before PR B.
 
 CLI: `argocd ... --core` uses the kubeconfig directly (no login, no Argo RBAC) and needs `argocd` as the kube namespace (separate kube context `argocd`, use `--kube-context argocd`). Since `server.insecure: true`, a login through a port-forward needs `--plaintext`.
@@ -91,10 +92,11 @@ First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secr
 - [x] etcd `Endpoints` object (`kube-prometheus-stack-kube-etcd` in `kube-system`, rendered from `kubeEtcd.endpoints`): Argo excludes `Endpoints` by default, so after PR B nobody would manage it and a rebuild would not create it. Decided 2026-11-09: no `resource.exclusions` change in Argo; etcd is scraped through a `ScrapeConfig` with a static target instead (`manifests/scrapeconfig-etcd.yaml`, Argo only, not in Flux's `kustomization.yaml`). `kubeEtcd.service` and `kubeEtcd.serviceMonitor` disabled, `kubeEtcd.enabled` stays `true` (gates the etcd rules and dashboard)
 - [x] Manual sync before PR B, done 2026-11-09 (`ScrapeConfig` created 15:26 UTC) (**required** since the `ScrapeConfig` change: the HelmRelease is suspended, so a values change only goes live through Argo). Check `argocd app diff` first (expected: tracking annotations, chart version labels, new `ScrapeConfig`). Watch the adoption and the hooks (PreSync createSecret, PostSync patchWebhook)
 - [x] After the sync: etcd target up in Prometheus (`count by (job) (up{job=~".*etcd.*"})`, job `kube-prometheus-stack-kube-etcd`), then delete the old `ServiceMonitor` `kube-prometheus-stack-kube-etcd` in `monitoring` and the `Service` of the same name in `kube-system` (its `Endpoints` go with it). Argo never tracked them, so it will not prune them. Target up and old objects gone (checked 2026-11-09)
-- [ ] Etcd dashboard: **empty after the switch.** The old job label was `kube-etcd` (from the Service's `jobLabel`), not `kube-prometheus-stack-kube-etcd`, so the dashboard's `cluster` variable defaults to a job without new data. Fix: `jobName: kube-etcd` in the `ScrapeConfig` (see `docs/STATUS.md`, kube-prometheus-stack)
+- [x] Etcd dashboard: empty after the switch because the old job label was `kube-etcd` (from the Service's `jobLabel`), not `kube-prometheus-stack-kube-etcd`. Fixed 2026-11-09 with `jobName: kube-etcd` in the `ScrapeConfig` (`db59f4e`)
+- [x] `HTTPRoute` `grafana` permanently `OutOfSync` (self-heal loop): Gateway API defaults written into the manifest (`09b476d`, lesson in `docs/STATUS.md`)
 - [x] PR B (#45, merged 2026-11-09): remove the Flux Kustomization from `monitoring.yaml`, delete `helmrelease.yaml`, `ocirepository.yaml`, `kustomization.yaml`, `kustomizeconfig.yaml`; `automated` (prune, selfHeal) plus `retry` on the `Application`; ownership table
 - [ ] Cleanup: orphaned `HelmRelease` (check it is still suspended before deleting), `OCIRepository`, values ConfigMap(s), `sh.helm.release.v1.kube-prometheus-stack.*` Secrets, Flux labels. State 2026-11-09: all still present (HelmRelease suspended, 2 values ConfigMaps, release Secrets `v1`–`v5`, `kustomize.toolkit.fluxcd.io/*` labels on e.g. the `HTTPRoute`, `helm.toolkit.fluxcd.io/*` on the chart objects)
-- [ ] Verify: Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable, app `Synced`/`Healthy`. 2026-11-09: pods and PVCs unchanged, `Healthy`, but `OutOfSync` on the `HTTPRoute` `grafana` (cause not investigated)
+- [ ] Verify: Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable, app `Synced`/`Healthy`. 2026-11-09: pods and PVCs unchanged, `Synced`/`Healthy` (after the `HTTPRoute` fix). Open: tick once the cleanup is done
 - [ ] Later, separate PR: admission webhook certs via cert-manager (`prometheusOperator.admissionWebhooks.certManager.enabled`, removes the hook Jobs)
 
 ## Phase 3: `cloudflared`, `cilium-config`
