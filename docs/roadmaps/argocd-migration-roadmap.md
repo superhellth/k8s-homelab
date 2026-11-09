@@ -4,11 +4,11 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 
 ## Current state (2026-11-09)
 
-- Done: phase 0 (except the open items below), phase 1, phase 2. `cubing` and `open-alps` were deployed directly under Argo.
+- Done: phase 0 (except the open items below), phases 1 to 4. Next: phase 5 (base layer), or phase 6 in between. `cubing` and `open-alps` were deployed directly under Argo.
 - Phase 2 (`kube-prometheus-stack`): handed over (PR #45), Flux leftovers removed, `Synced`/`Healthy`.
 - `argocd` HelmRelease (`docs/STATUS.md` open item 11): reconciling again. Probable cause of the failure: the application controller hit its old 512Mi limit after adopting kube-prometheus-stack. `argocd-server` raised to 128Mi / 384Mi (PR #47) after OOM kills.
-- Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified); Flux labels still to remove.
-- Phase 4: `pg-main` PR A (#51) merged, diff clean (only `tracking-id`); PR B removes the Flux Kustomization and enables auto-sync.
+- Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified). Flux labels gone from both.
+- Phase 4: `pg-main` handed over (PR A #51, PR B #52, merged 2026-11-09), `Synced`/`Healthy`, Flux labels and annotations removed. Still open: confirm the first daily backup under Argo (2026-11-10 03:00 UTC).
 - UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
@@ -100,25 +100,26 @@ First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secr
 - [x] Verify (2026-11-09): Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable (`302` to the Access login), app `Synced`/`Healthy`
 - [ ] Later, separate PR: admission webhook certs via cert-manager (`prometheusOperator.admissionWebhooks.certManager.enabled`, removes the hook Jobs)
 
-## Phase 3: `cloudflared`, `cilium-config` (done, except the label cleanup)
+## Phase 3: `cloudflared`, `cilium-config` (done)
 
 Simple leaves. Learn: sync waves once several apps exist.
 
 - [x] Hand over `cloudflared` (PR A #47, PR B #48, 2026-11-09): plain kustomize source, no Helm. Argo's kustomize renders the `configMapGenerator` with the same hash as Flux, so the diff was only the `tracking-id` annotations and no pod restarted. Namespace gets `Prune=false,Delete=false`. Flux labels removed by hand afterwards
 - [x] Hand over `cilium-config` (PR A #49, PR B #50, 2026-11-09): plain kustomize source, two cluster-scoped objects (`CiliumLoadBalancerIPPool`, `CiliumL2AnnouncementPolicy`), no prune protection (no cascade, no state)
 - [x] After PR B: `Synced`/`Healthy`, `tracking-id` on both objects, `generation` unchanged, Gateway LB IP unchanged (checked 2026-11-09)
-- [ ] Remove the Flux labels from both objects (`docs/STATUS.md` open item 12)
+- [x] Flux labels gone from both objects (found already removed on 2026-11-09)
 
-## Phase 4: `pg-main`
+## Phase 4: `pg-main` (done, except the first backup check)
 
 High stakes: state not in Git. Learn: Argo prune/delete protection, Application finalizers.
 
-- [ ] Fresh base backup to R2 before starting
+- [x] Recent base backup to R2 before starting: the daily backup on 2026-11-09 03:00 UTC was `completed` (no extra manual backup)
 - [x] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application` (PR A, 2026-11-09): set as annotations directly in `cluster.yaml` and `namespace.yaml`, not as a Flux-style patch, because Argo renders only `databases/pg-main/` and never sees the patches in `databases.yaml`. Flux applies the annotation too (harmless), so the protection is live before Argo owns anything. `databases` added to the `infrastructure` project's `destinations`
 - [x] PR A (#51) merged: `argocd app diff pg-main` showed only `tracking-id` annotations, plus `sync-options` on `Cluster`/`Namespace` (live, but owned by `kustomize-controller`). No CNPG webhook defaults
-- [ ] PR B: delete `clusters/super-hellthalos/databases.yaml` (its only Kustomization was `pg-main`), `automated` (prune, selfHeal) plus `retry` on the `Application`
-- [ ] Cleanup after PR B: Flux labels on all objects, `kustomize.toolkit.fluxcd.io/prune` annotation on `Cluster` and `Namespace`
-- [ ] Hand over, verify the cluster is untouched (`kubectl -n databases get cluster pg-main`, primary unchanged)
+- [x] PR B (#52, merged 2026-11-09 18:00 UTC): delete `clusters/super-hellthalos/databases.yaml` (its only Kustomization was `pg-main`), `automated` (prune, selfHeal) plus `retry` on the `Application`
+- [x] Cleanup after PR B (2026-11-09): `kustomize.toolkit.fluxcd.io/name`/`namespace` labels removed by hand from all 9 objects (none of these keys were in the manifests, so Argo does not re-add them), `kustomize.toolkit.fluxcd.io/prune` removed from `Cluster` and `Namespace`. App stayed `Synced`. Cluster-wide scan: no object carries a Flux label pointing to a Kustomization that no longer exists
+- [x] Verify the cluster is untouched: `Cluster` `Ready`, `ContinuousArchiving` `True`, primary still `pg-main-1`, no pod restarted (checked 2026-11-09)
+- [ ] First daily backup under Argo (2026-11-10 03:00 UTC) `completed`
 
 ## Phase 5: base layer
 
