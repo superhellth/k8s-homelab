@@ -7,7 +7,7 @@ High-level plan for moving GitOps from Flux to Argo CD gradually, one component 
 - Done: phase 0 (except the open items below), phase 1, phase 2. `cubing` and `open-alps` were deployed directly under Argo.
 - Phase 2 (`kube-prometheus-stack`): handed over (PR #45), Flux leftovers removed, `Synced`/`Healthy`.
 - `argocd` HelmRelease (`docs/STATUS.md` open item 11): reconciling again. Probable cause of the failure: the application controller hit its old 512Mi limit after adopting kube-prometheus-stack. `argocd-server` raised to 128Mi / 384Mi (PR #47) after OOM kills.
-- Phase 3: `cloudflared` handed over (PRs #47, #48). Next: `cilium-config`.
+- Phase 3: `cloudflared` handed over (PRs #47, #48). `cilium-config` handed over (PRs #49, #50, merged 2026-11-09, adoption verified); Flux labels still to remove. Next: phase 4 (`pg-main`).
 - UI at `https://argocd.superhellth.com` behind Cloudflare Access since 2026-11-09. Before that, the route was live for a short time without an Access application (UI and API public, only the `admin` password in front). Lesson: Access application first, DNS record last, and check with `curl -sI` (expect a `302` to `blue-hat-330a.cloudflareaccess.com`). `argocd-initial-admin-secret` still exists.
 
 ## Principles
@@ -23,11 +23,11 @@ Current dependency graph (Flux `dependsOn`, Flux-owned components only):
 pg-main ──► cnpg-barman-plugin ──► cnpg-operator
    │                └────────────► cert-manager ◄── cert-manager-config ◄── gateway
    └──► sealed-secrets, local-path-provisioner
-cilium-config ──► cilium ──► gateway-api-crds
+cilium ──► gateway-api-crds
 argocd-config ──► argocd
 ```
 
-Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`, `kube-prometheus-stack` (implicitly needs `sealed-secrets`, `local-path-provisioner`, `gateway-api-crds`), `cloudflared` (implicitly needs `sealed-secrets`, `gateway`).
+Owned by Argo CD: `wg-app` (implicitly needs `pg-main`), `cubing`, `open-alps`, `kube-prometheus-stack` (implicitly needs `sealed-secrets`, `local-path-provisioner`, `gateway-api-crds`), `cloudflared` (implicitly needs `sealed-secrets`, `gateway`), `cilium-config` (implicitly needs `cilium`, whose operator creates the CRDs).
 
 ## Layout
 
@@ -100,19 +100,22 @@ First Helm chart. Learn: how Argo renders Helm (`helm template`, no release secr
 - [x] Verify (2026-11-09): Prometheus/Grafana pods not restarted, same PVCs, Grafana reachable (`302` to the Access login), app `Synced`/`Healthy`
 - [ ] Later, separate PR: admission webhook certs via cert-manager (`prometheusOperator.admissionWebhooks.certManager.enabled`, removes the hook Jobs)
 
-## Phase 3: `cloudflared`, `cilium-config` (in progress)
+## Phase 3: `cloudflared`, `cilium-config` (done, except the label cleanup)
 
 Simple leaves. Learn: sync waves once several apps exist.
 
 - [x] Hand over `cloudflared` (PR A #47, PR B #48, 2026-11-09): plain kustomize source, no Helm. Argo's kustomize renders the `configMapGenerator` with the same hash as Flux, so the diff was only the `tracking-id` annotations and no pod restarted. Namespace gets `Prune=false,Delete=false`. Flux labels removed by hand afterwards
-- [ ] Hand over `cilium-config`
+- [x] Hand over `cilium-config` (PR A #49, PR B #50, 2026-11-09): plain kustomize source, two cluster-scoped objects (`CiliumLoadBalancerIPPool`, `CiliumL2AnnouncementPolicy`), no prune protection (no cascade, no state)
+- [x] After PR B: `Synced`/`Healthy`, `tracking-id` on both objects, `generation` unchanged, Gateway LB IP unchanged (checked 2026-11-09)
+- [ ] Remove the Flux labels from both objects (`docs/STATUS.md` open item 12)
 
 ## Phase 4: `pg-main`
 
 High stakes: state not in Git. Learn: Argo prune/delete protection, Application finalizers.
 
 - [ ] Fresh base backup to R2 before starting
-- [ ] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application`
+- [x] `Prune=false,Delete=false` on `Cluster` and `Namespace`, no cascading finalizer on the `Application` (PR A, 2026-11-09): set as annotations directly in `cluster.yaml` and `namespace.yaml`, not as a Flux-style patch, because Argo renders only `databases/pg-main/` and never sees the patches in `databases.yaml`. Flux applies the annotation too (harmless), so the protection is live before Argo owns anything. `databases` added to the `infrastructure` project's `destinations`
+- [ ] PR A merged: check `argocd app diff pg-main` (expected: `tracking-id` annotations; watch for CNPG webhook defaults in the `Cluster` spec), then PR B
 - [ ] Hand over, verify the cluster is untouched (`kubectl -n databases get cluster pg-main`, primary unchanged)
 
 ## Phase 5: base layer
