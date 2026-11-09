@@ -11,6 +11,8 @@
 - Prometheus rule for db getting large
 - understand edge termination (certs)
 - pretty README
+- SOPS
+- argo, grafana auth
 
 ## Low
 - deploy S3

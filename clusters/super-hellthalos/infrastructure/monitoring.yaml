@@ -15,5 +15,5 @@ spec:
     kind: GitRepository
     name: flux-system
   path: ./infrastructure/kube-prometheus-stack
-  prune: true
+  prune: false
   wait: true
