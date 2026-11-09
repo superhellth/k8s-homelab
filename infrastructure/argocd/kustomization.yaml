@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - ocirepository.yaml
   - helmrelease.yaml
+  - httproute.yaml
 configMapGenerator:
   - name: argocd-config
     namespace: argocd
